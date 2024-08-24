@@ -43,7 +43,7 @@ class CheckinSession:
 
     def increment_reminder(self):
         self.reminder_count += 1
-    
+
     def move_to_absent(self):
         # Move all present members to absent at the start of each reminder. 
         self.present = []
@@ -66,14 +66,14 @@ class CheckinSession:
             self.exited.append(member)
             logging.info("Member removed due to absences: %s", member.display_name)
         return removed_members
-    
+
 
     def mark_present(self, user):
         # Mark a user as present. 
 
         if user in self.exited or user not in self.members:
             return "You are not part of this session."
-        
+
         if user in self.present:
             return "You are already marked as present."
 
@@ -84,10 +84,10 @@ class CheckinSession:
 
     def join_session(self, user):
         # Handle when a user joins the session.
-        
+
         if user in self.members:
             return "You are already in the session."
-        
+
         if user in self.exited:
             self.exited.remove(user)
 
@@ -96,11 +96,11 @@ class CheckinSession:
         self.absences[user] = 0
 
         return "You have joined the session."
-    
+
 
     def leave_session(self, user):
         # Handle when a user leaves the session.
-        
+
         if user in self.present:
             self.present.remove(user)
         if user in self.members:
@@ -125,7 +125,7 @@ class CheckinSession:
         self.last_reminder_message = None
         self.reminder_count = 0
         logging.debug(f"Session data for session {self.session_id} cleared successfully.")
-    
+
 
     async def end_session(self, interaction: discord.Interaction, bot: commands.Bot, button_session_id: str, session):
         """End the session and send the final message."""
@@ -165,8 +165,8 @@ class CheckinSession:
             # Disable buttons in the last reminder message using the method from the CheckinCog class
             await cog.disable_previous_buttons(session, interaction.channel)
 
-        
-        
+
+
         # Send a confirmation message to the creator (optional)
         logging.info(f"Check-in session {button_session_id} successfully ended by {interaction.user.display_name}.")
 
@@ -181,17 +181,17 @@ class CheckinCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.active_sessions = {}
-        logging.debug("Check-in Cog initialized.")
+        logging.info("Check-in Cog initialized.")
 
     def generate_session_id(self):
         """Generate a unique session ID."""
         return str(uuid.uuid4())  # Generates a random unique session ID
-    
+
     @commands.hybrid_command(name='checkin', description='Starts a check-in session with specified duration and mentions.')
     async def start_checkin(self, ctx, duration: str, *, mentions: str):
         # Parse the duration
         duration_seconds = parse_duration(duration)
-        
+
         if duration_seconds == None:
             logging.warning("Wrong duration format entered.")
             await ctx.send(f"Wrong duration format used. Use \'2d 14h 25m 30s\' or use day(s) hour(s)/hr(s) minute(s)/min(s) second(s)/sec(s)", ephemeral=True)
@@ -227,7 +227,7 @@ class CheckinCog(commands.Cog):
 
         # Generate a unique session ID for the new session
         session_id = self.generate_session_id()
-        
+
         # Create a new session and save it
         session = CheckinSession(session_id=session_id, creator=ctx.author, channel_id=ctx.channel.id, members=members, duration=duration_seconds)
         self.active_sessions[session_id] = session  # Store session by its ID
@@ -236,7 +236,7 @@ class CheckinCog(commands.Cog):
         # Send the initial message with buttons
         await self.send_initial_message(ctx.channel, session)
 
-    
+
     async def send_initial_message(self, channel, session : CheckinSession):
         # Create and send the initial message
         embed = self.create_embed(session, initial=True)
@@ -244,11 +244,11 @@ class CheckinCog(commands.Cog):
         initial_message = await channel.send(embed=embed, view=view)
 
         session.last_reminder_message = initial_message
-        
+
         # Start the reminder loop
         self.bot.loop.create_task(self.run_checkin_reminders(channel, session))
 
-    
+
     async def disable_previous_buttons(self, session: CheckinSession, channel: discord.TextChannel):
         """Disable the buttons in the last reminder message, if it exists."""
         if session.last_reminder_message:
@@ -278,26 +278,26 @@ class CheckinCog(commands.Cog):
                 logging.error(f"Unexpected error disabling buttons: {str(e)}")
 
 
-    
+
 
     async def run_checkin_reminders(self, channel, session : CheckinSession):    
 
         while session.session_id in self.active_sessions:
             await asyncio.sleep(session.duration)
-            
+
             # Check if session still exists in active_sessions
             if session.session_id not in self.active_sessions:
                 logging.info(f"Session {session.session_id} has ended and was removed. Stopping reminder loop.")
                 return  # Break out of the reminder loop since the session has ended.
-            
+
             logging.info(f"Session {session.session_id} exists and it continues.")
-            
+
             # Increment reminder_count
             session.increment_reminder()
-            
+
             # First, disable the buttons of the previous reminder message
             await self.disable_previous_buttons(session, channel)
-            
+
             # Move present members to absent, update absences, and handle removals
             session.move_to_absent()
             removed_members = session.update_absences()
@@ -322,7 +322,7 @@ class CheckinCog(commands.Cog):
 
             logging.info(f"Reminder {session.reminder_count} sent with updated members.")
 
-    
+
     # Check if the user is in ANY session
     async def check_session_exists(self, session_id: str, interaction: discord.Interaction) -> CheckinSession:
         """Check if a session exists by session ID."""
@@ -346,7 +346,7 @@ class CheckinCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
-        
+
         result = ""
         button_session_id = ""
         session: CheckinSession = None
@@ -356,7 +356,7 @@ class CheckinCog(commands.Cog):
 
         custom_id = interaction.data.get('custom_id')
         logging.info(f"Custom ID Looks like this: {custom_id}")
-        
+
         if custom_id:  # Ensure custom_id exists
             action, button_session_id = custom_id.split('_')
             logging.info(f'SessionID: {button_session_id}')
@@ -470,4 +470,4 @@ class CheckinCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(CheckinCog(bot))
-    logging.info("CheckinCog loaded successfully.")
+    logging.info("Checkin cog loaded successfully.")

@@ -1,0 +1,49 @@
+# Compiled bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.eggs/
+dist/
+build/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# IDE/Editor files
+.idea/
+.vscode/
+*.iml
+.project
+.classpath
+
+# Local configuration
+.env
+.env.local
+.env.development.local
+.env.production.local
+
+# Database files
+*.sqlite3
+*.db
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+*.tmp
+*~
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Operating System Files
+.Trash/
+.Spotlight-V100/
+
+# Explicitly exclude sensitive files
+credentials.json 

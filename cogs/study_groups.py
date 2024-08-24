@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 class StudyGroups(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        logger.info("Study Group cog initialized")
 
     async def create_session_role(self, guild, session_name):
         role_name = f"In {session_name}"
@@ -195,3 +196,4 @@ class StudyGroups(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(StudyGroups(bot))
+    logger.info("StudyGroups cog loaded")

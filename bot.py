@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
-
+# TOKEN = "" # For testing purposes
 BOT_DEVELOPER_ID = os.getenv('BOT_DEVELOPER_ID')
 
 # Set up intents

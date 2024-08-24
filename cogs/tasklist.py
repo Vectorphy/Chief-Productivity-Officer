@@ -1,10 +1,14 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+import logging
+
+logger = logging.getLogger(__name__)
 
 class TaskList(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        logger.info("Tasklist cog initialized")
 
     @app_commands.command(name="task_add", description="Add a new task to your list")
     async def add_task(self, interaction: discord.Interaction, *, description: str):
@@ -33,3 +37,4 @@ class TaskList(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(TaskList(bot))
+    logger.info("Loaded TaskList cog")
