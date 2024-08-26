@@ -99,3 +99,7 @@
   - Sets a specific permission level for the specified user.
 
 Note: All commands use slash command syntax (/).
+
+
+
+---

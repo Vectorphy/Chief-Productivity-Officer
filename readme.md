@@ -88,3 +88,7 @@ The bot uses Python's built-in `logging` module for comprehensive logging across
 ## Support
 
 If you encounter any problems or have any questions, please open an issue on this repository. For more detailed information on usage and commands, refer to the [COMMANDS.md](COMMANDS.md) file.
+
+
+
+---
