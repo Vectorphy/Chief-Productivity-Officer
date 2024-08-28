@@ -37,7 +37,7 @@ def parse_duration(duration_str):
     logger.debug(f"Parsed duration '{duration_str}' to {result} seconds")
     return result
 
-def parse_mentions(ctx, mentions):
+def parse_mentions(interaction: discord.Interaction, mentions: str):
     logger.info(f"Parsing mentions: {mentions}")
     mention_list = mentions.split()
     members = []
@@ -46,7 +46,7 @@ def parse_mentions(ctx, mentions):
         mention = mention.strip()
         if mention.startswith('<@&'):  # Role mention
             role_id = int(mention.strip('<@&>'))
-            role = ctx.guild.get_role(role_id)
+            role = interaction.guild.get_role(role_id)
             if role:
                 members.extend(role.members)
                 logger.debug(f"Added {len(role.members)} members from role {role.name}")
@@ -54,16 +54,18 @@ def parse_mentions(ctx, mentions):
                 logger.warning(f"Role not found for ID: {role_id}")
         elif mention.startswith('<@!') or mention.startswith('<@'):  # User mention
             user_id = int(mention.strip('<@!>').strip('<@>'))
-            member = ctx.guild.get_member(user_id)
+            member = interaction.guild.get_member(user_id)
             if member:
                 members.append(member)
                 logger.debug(f"Added member {member.name}")
             else:
                 logger.warning(f"Member not found for ID: {user_id}")
-    
+
+    # Remove duplicates and ensure unique members
     unique_members = list(set(members))
     logger.info(f"Parsed {len(mention_list)} mentions into {len(unique_members)} unique members")
     return unique_members
+
 
 async def check_manager(ctx_or_interaction):
     if isinstance(ctx_or_interaction, discord.Interaction):
