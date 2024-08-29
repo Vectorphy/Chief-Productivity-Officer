@@ -5,6 +5,7 @@ from discord.ext import commands
 from datetime import datetime
 import time
 import logging
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,42 @@ def parse_mentions(interaction: discord.Interaction, mentions: str):
     unique_members = list(set(members))
     logger.info(f"Parsed {len(mention_list)} mentions into {len(unique_members)} unique members")
     return unique_members
+
+
+def generate_custom_id(action : str, session_id: str):
+    """
+    Generate a custom ID with the module namespace, action, and session ID.
+    
+    :param action: The action to be included in the custom ID.
+    :param session_id: The session ID to be included in the custom ID.
+    :return: A custom ID string in the format "namespace~action~session_id".
+    """
+    namespace = sys.modules[__name__].__name__.split('.')[-1]
+    return f"{namespace}~{action}~{session_id}"
+
+
+
+
+def parse_custom_id(custom_id: str) -> tuple:
+    """
+    Parse a custom ID into its namespace, action, and session ID components.
+    
+    :param custom_id: The custom ID to be parsed.
+    :return: A tuple of (namespace, action, session_id).
+    :raises ValueError: If the custom ID format is invalid.
+    """
+    try:
+        namespace, action, session_id = custom_id.split('~')
+        
+        # Log the details of the parsed components
+        logger.info(f"Received custom_id: {custom_id}")
+        logger.info(f"Namespace: {namespace},\n Action: {action},\n Session ID: {session_id}")
+        
+        return namespace, action, session_id
+    except ValueError as ve:
+        logger.error(f"Failed to parse custom_id: {custom_id} - Error: {ve}")
+        raise ValueError(f"Invalid custom_id format: {custom_id} - {ve}")
+
 
 
 async def check_manager(ctx_or_interaction):
