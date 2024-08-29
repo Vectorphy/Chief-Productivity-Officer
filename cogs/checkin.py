@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from datetime import datetime
-from utils import parse_duration, parse_mentions, parse_seconds_to_hms
+from utils import parse_duration, parse_mentions, parse_seconds_to_hms, generate_custom_id, parse_custom_id
 import asyncio
 import logging
 import random
@@ -45,6 +45,7 @@ class CheckinSession:
 
     """Helper and Update Functions"""
 
+    
     ## Helper Function - Increment Reminder Count
     def increment_reminder(self):
         self.reminder_count += 1
@@ -288,9 +289,9 @@ class CheckinCog(commands.Cog):
         if not initial:
             view.add_item(discord.ui.Button(label='Present', style=discord.ButtonStyle.success, custom_id=f'present_{session.session_id}'))
 
-        view.add_item(discord.ui.Button(label='Join', style=discord.ButtonStyle.primary, custom_id=f'join_{session.session_id}'))
-        view.add_item(discord.ui.Button(label='Leave', style=discord.ButtonStyle.danger, custom_id=f'leave_{session.session_id}'))
-        view.add_item(discord.ui.Button(label='End', style=discord.ButtonStyle.secondary, custom_id=f'end_{session.session_id}'))
+        view.add_item(discord.ui.Button(label='Join', style=discord.ButtonStyle.primary, custom_id=f'{generate_custom_id("join",session.session_id)}'))
+        view.add_item(discord.ui.Button(label='Leave', style=discord.ButtonStyle.danger, custom_id=f'generate_custom_id("leave",session.session_id)'))
+        view.add_item(discord.ui.Button(label='End', style=discord.ButtonStyle.secondary, custom_id=f'{generate_custom_id("end",session.session_id)}'))
 
         return view
     
@@ -456,17 +457,22 @@ class CheckinCog(commands.Cog):
         if interaction.type != discord.InteractionType.component:
             return  # Ignore non-button interactions
 
-        custom_id = interaction.data.get('custom_id')
-        logger.info(f"Custom ID Looks like this: {custom_id}")
-        
-        if custom_id:  # Ensure custom_id exists
-            action, button_session_id = custom_id.split('_')
-            logger.info(f'SessionID: {button_session_id}')
-            logger.info(f"Action: {action}")  # Extract the action and session_id
+        custom_id = interaction.custom_id
+        namespace, action, button_session_id = parse_custom_id(custom_id)
+
+        # Ensure the custom_id belongs to this module
+        current_namespace = __name__.split('.')[-1]
+        if namespace != current_namespace:
+            logger.warning(f"Interaction doesn't belong to: {current_namespace}. Interaction belongs to another namespace: {namespace}")
+            return
 
         session = await self.check_session_exists(button_session_id, interaction)
         if not session:
             return  # Session does not exist, message already sent
+
+        if namespace != "checkin":
+            logger.info(f"Button interacted was not from 'checkin' module, it was from {namespace} module ")
+            return
 
         if session:
             # Handle Present Button
