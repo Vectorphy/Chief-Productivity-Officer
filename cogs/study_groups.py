@@ -2,15 +2,16 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import asyncio
-from utils import parse_seconds_to_hms, parse_duration, parse_mentions, generate_custom_id, parse_custom_id
+from utils import parse_seconds_to_hms, parse_mentions, generate_custom_id, parse_custom_id, assign_role_to_user
 import logging
 import uuid
 from typing import List
 from datetime import datetime, timedelta
+import sys
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
+current_namespace = sys.modules[__name__].__name__.split('.')[-1]
 
 class StudyGroup:
     def __init__(self, guild: discord.Guild, name: str, creator_id: int, category_id: int, max_size: int = 10):
@@ -41,34 +42,9 @@ class StudyGroup:
     
     
     @classmethod
-    async def create_group(cls, interaction: discord.Interaction, name: str, max_size: int, mentions: str, category: discord.CategoryChannel):
+    async def create_group(cls, interaction: discord.Interaction, name: str, max_size: int, mentioned_members: List[discord.Member], category: discord.CategoryChannel):
         ### Create a new study group and return the instance, handling errors with ephemeral messages
         logger.info(f"Creating group '{name}' for creator {interaction.user.display_name} in guild {interaction.guild.name}")
-
-        # Validate max_size
-        if max_size <= 0:
-            await interaction.followup.send(f"Invalid max_size: {max_size}. It must be a positive number.", ephemeral=True)
-            return None
-
-        # Parse mentions
-        try:
-            mentioned_members = parse_mentions(interaction, mentions)
-            if not mentioned_members:
-                await interaction.followup.send("No valid members found in the mentions. Please mention valid users or roles.", ephemeral=True)
-                return None
-            if len(mentioned_members) > max_size:
-                await interaction.followup.send(f"Too many members specified. Max allowed: {max_size}.", ephemeral=True)
-                return None
-            logger.info(f"Parsed mentions: {[member.display_name for member in mentioned_members]}")
-        except Exception as e:
-            logger.error(f"Error parsing mentions: {e}")
-            await interaction.followup.send(f"Error parsing mentions: {e}", ephemeral=True)
-            return None
-
-        # Check if a category is provided
-        if category is None:
-            await interaction.followup.send("No category specified. Please provide a valid category.", ephemeral=True)
-            return None
 
         # Create the group role
         try:
@@ -88,6 +64,18 @@ class StudyGroup:
             logger.error(f"Error creating channels for group '{name}': {e}")
             await interaction.followup.send(f"Error creating channels for the group: {e}", ephemeral=True)
             return None
+
+        # Assign Users to roles
+        try:
+            for member in mentioned_members:
+                await assign_role_to_user(member, group_role)
+                logger.info(f"User '{member.display_name}' assigned to role '{group_role.name}' for group '{name}'")
+            logger.info(f"Users assigned to role '{group_role.name}' for group '{name}'")
+        except Exception as e:
+            logger.error(f"Error assigning users to role '{group_role.name}' for group '{name}': {e}")
+            await interaction.followup.send(f"Error assigning users to role: {e}", ephemeral=True)
+            return
+
 
         # Sync permissions for the group role
         try:
@@ -114,16 +102,6 @@ class StudyGroup:
         study_group.vc_id = voice_channel.id
 
 
-        # Add the mentioned members to the group
-        try:
-            for member in mentioned_members:
-                await study_group.membership.add_member(member)
-            logger.info(f"Added {len(mentioned_members)} members to group '{name}'")
-        except Exception as e:
-            logger.error(f"Error adding members to group '{name}': {e}")
-            await interaction.followup.send(f"Error adding members: {e}", ephemeral=True)
-            return None
-
         # Send a welcome message, group info embed, and button view in the text channel
         try:
             # Send the welcome message
@@ -145,10 +123,6 @@ class StudyGroup:
         except discord.Forbidden as forbidden_e:
             logger.error(f"Permission error while sending messages in group '{study_group.name}' for channel {study_group.text_id}: {forbidden_e}")
             await interaction.followup.send(f"Permission error occurred while sending messages: {forbidden_e}", ephemeral=True)
-
-        except discord.InvalidArgument as invalid_arg_e:
-            logger.error(f"Invalid argument error while sending messages in group '{study_group.name}' for channel {study_group.text_id}: {invalid_arg_e}")
-            await interaction.followup.send(f"Invalid argument error occurred while sending messages: {invalid_arg_e}", ephemeral=True)
 
         except Exception as e:
             logger.error(f"Unexpected error sending messages in group '{study_group.name}' for channel {study_group.text_id}: {e}")
@@ -224,16 +198,8 @@ class StudyGroup:
                 logger.error(f"Error transferring ownership: {e}")
 
 
-
-
-    def sync_permissions(self):
-        ### Sync permissions across the text and voice channels based on the group role
-        # Pseudocode:
-        # Sync permissions for VC and text channel, allowing only group members to access
-        pass
-
     
-    def clear_group_data(self, study_group):
+    def clear_group_data(self, study_group: 'StudyGroup'):
         """Clear all data associated with the study group."""
         try:
             study_group.membership.members.clear()  # Clear member list
@@ -262,11 +228,13 @@ class StudyGroup:
                     return
 
                 # 2. Check if there are no members left in the group
+                '''
                 if len(self.membership.members) == 0:
                     logger.warning(f"Group '{self.name}' has no members left and is being ended.")
                     self.active = False  # Mark as inactive
                     await self.end_group(self.group_id, delete_text_channel=False)
                     return
+                '''
 
                 # 3. Check if the group's duration has elapsed
                 current_time = datetime.now()
@@ -480,13 +448,13 @@ class StudyGroup:
             view = discord.ui.View()
 
             # First line: Leave, Votekick, and End Group
-            view.add_item(discord.ui.Button(label="Leave Group", custom_id=group.generate_custom_id("leave_group", group.group_id)))
-            view.add_item(discord.ui.Button(label="Votekick", custom_id=group.generate_custom_id("votekick", group.group_id)))
-            view.add_item(discord.ui.Button(label="End Group", custom_id=group.generate_custom_id("end_group", group.group_id)))
+            view.add_item(discord.ui.Button(label="Leave Group", custom_id=generate_custom_id("leave_group", group.group_id, current_namespace)))
+            view.add_item(discord.ui.Button(label="Votekick", custom_id=generate_custom_id("votekick", group.group_id, current_namespace)))
+            view.add_item(discord.ui.Button(label="End Group", custom_id=generate_custom_id("end_group", group.group_id, current_namespace)))
 
             # Second line: Speak and Video
-            view.add_item(discord.ui.Button(label="Speak On/Off", custom_id=group.generate_custom_id("speak_toggle", group.group_id)))
-            view.add_item(discord.ui.Button(label="Video On/Off/Force", custom_id=group.generate_custom_id("video_toggle", group.group_id)))
+            view.add_item(discord.ui.Button(label="Speak On/Off", custom_id=generate_custom_id("speak_toggle", group.group_id, current_namespace)))
+            view.add_item(discord.ui.Button(label="Video On/Off/Force", custom_id=generate_custom_id("video_toggle", group.group_id, current_namespace)))
 
             # Send the message with the button view
             await send_channel.send(content="Here are your group control buttons:", view=view)
@@ -512,8 +480,8 @@ class StudyGroup:
                 )
 
                 view = discord.ui.View()
-                view.add_item(discord.ui.Button(label="Accept", style=discord.ButtonStyle.green, emoji="✅", custom_id=self.study_group.generate_custom_id("accept")))
-                view.add_item(discord.ui.Button(label="Decline", style=discord.ButtonStyle.red, emoji="❌", custom_id=self.study_group.generate_custom_id("decline")))
+                view.add_item(discord.ui.Button(label="Accept", style=discord.ButtonStyle.green, emoji="✅", custom_id=generate_custom_id("accept", self.study_group.group_id, current_namespace)))
+                view.add_item(discord.ui.Button(label="Decline", style=discord.ButtonStyle.red, emoji="❌", custom_id=generate_custom_id("decline", self.study_group.group_id, current_namespace)))
 
                 invite_message = await send_channel.send(
                     f"{invited_member.mention}, you have been invited to the group {self.study_group.name}.",
@@ -572,16 +540,74 @@ class StudyGroupCog(commands.Cog):
     @app_commands.describe(name="Set a name for your study group", max_size="Set the Max number of members", mentions="Mention roles or users to add", category="Category where the group channels will be created")
     async def create_group(self, interaction: discord.Interaction, name: str, mentions : str, category: discord.CategoryChannel, max_size: int = 10):
        
-        # Defer the message to prevent delays and avoid timeout
-        await interaction.response.defer(ephemeral=True)
+        # Defer the message to prevent delays and avoid timeouts
+        await interaction.response.defer()
+        # Validate parameters before proceeding
+        try:
+            # Name Validation
+            if name is None or len(name) > 100:
+                await interaction.followup.send("Invalid group name. The name must be non-empty and less than 100 characters.", ephemeral=True)
+                logger.warning(f"Invalid group name provided: {name}")
+                return
+            
+            # Validate max_size
+            if max_size <= 0:
+                await interaction.followup.send(f"Invalid max_size: {max_size}. It must be a positive number.", ephemeral=True)
+                logger.warning(f"Invalid max_size provided: {max_size}")
+                return
 
+            # Parse mentions
+            try:
+                mentioned_members : List[discord.Member] = parse_mentions(interaction, mentions)
+                logger.info(f"Parsed mentions: {[mentioned_member.display_name for mentioned_member in mentioned_members]}")
+                if not mentioned_members:
+                    await interaction.followup.send("No valid members found in the mentions. Please mention valid users or roles.", ephemeral=True)
+                    logger.warning(f"No valid members found in mentions: {mentions}")
+                    return
+                if len(mentioned_members) > max_size:
+                    await interaction.followup.send(f"Too many members specified. Max allowed: {max_size}.", ephemeral=True)
+                    logger.warning(f"Too many members mentioned ({len(mentioned_members)}) compared to max_size: {max_size}")
+                    return
+                logger.info(f"Parsed mentions: {[member.display_name for member in mentioned_members]}")
+            except Exception as e:
+                logger.error(f"Error parsing mentions: {e}")
+                await interaction.followup.send(f"Error parsing mentions: {e}", ephemeral=True)
+                return
+
+            # Check if a valid category is provided
+            if category is None or category not in interaction.guild.categories:
+                await interaction.followup.send("No valid category specified. Please provide a valid category.", ephemeral=True)
+                logger.warning(f"No valid category provided or category not found in guild: {category}")
+                return
+
+        except discord.Forbidden as forbidden_e:
+            logger.error(f"Permission error during parameter validation: {forbidden_e}")
+            await interaction.followup.send(f"Permission error occurred while validating parameters: {forbidden_e}", ephemeral=True)
+            return
+
+        except discord.HTTPException as http_e:
+            logger.error(f"HTTP error during parameter validation: {http_e}")
+            await interaction.followup.send(f"HTTP error occurred while validating parameters: {http_e}", ephemeral=True)
+            return
+
+        except Exception as e:
+            logger.critical(f"Unexpected error during parameter validation: {e}")
+            await interaction.followup.send(f"An unexpected error occurred while validating parameters: {e}", ephemeral=True)
+            return
+
+        except Exception as e:
+            logger.error(f"Error during parameter validation: {e}")
+            await interaction.followup.send(f"Error during parameter validation: {e}", ephemeral=True)
+            return
+
+        
         try:
             # Attempt to create the study group using the StudyGroup class
             study_group = await StudyGroup.create_group(
                 interaction,      # Pass interaction, no need for guild or creator explicitly
                 name=name,
                 max_size=max_size,
-                mentions=mentions,
+                mentioned_members=mentioned_members,
                 category=category
             )
 
@@ -607,35 +633,57 @@ class StudyGroupCog(commands.Cog):
     @commands.Cog.listener()
     async def on_component(self, interaction: discord.Interaction):
         
-        await interaction.response.defer(ephemeral=True)
-        
+        if interaction.type != discord.InteractionType.component:
+            return
+
+        await interaction.response.defer()
+
+        button_namespace, action, group_id = "", "", ""
+        logger.debug(f"Study Group: Interaction Data: {interaction}")
+
+
+        # Parse the custom ID from the interaction
         try:
-            # Extract action and group ID from the interaction's custom ID
-            custom_id = interaction.custom_id
-            namespace, action, group_id = parse_custom_id(custom_id)
-
-            # Ensure the custom_id belongs to this module
-            current_namespace = __name__.split('.')[-1]
-            if namespace != current_namespace:
-                logger.warning(f"Interaction doesn't belong to: {current_namespace}. Interaction belongs to another namespace: {namespace}")
-                return
+            button_namespace, action, group_id = parse_custom_id(interaction)
             
-            # Fetch the study group from the study_groups dictionary
-            group = self.study_groups.get(group_id)
+            if button_namespace != current_namespace:
+                logger.warning(f"Interaction doesn't belong to: {current_namespace}. It belongs to another namespace: {button_namespace}")
+                return
+        except ValueError as e:
+            logger.error(f"Error processing interaction: {e}")
+            await interaction.followup.send("There was an error processing your request.", ephemeral=True)
+            return
+        except Exception as e:
+            logger.error(f"Unexpected error during custom_id parsing: {e}")
+            await interaction.followup.send("An unexpected error occurred while processing your request.", ephemeral=True)
+            return
 
-            # Check if the group exists
+
+        # Fetch the study group from the study_groups dictionary
+        try:
+            group = self.study_groups.get(group_id)
             if not group:
                 logger.warning(f"Group with ID {group_id} does not exist.")
                 await interaction.followup.send("This group does not exist.", ephemeral=True)
                 return
+        except Exception as e:
+            logger.error(f"Error fetching study group: {e}")
+            await interaction.followup.send("There was an error retrieving the group information.", ephemeral=True)
+            return
 
-            # Check if the user is a member of the group
+        # Check if the user is a member of the group
+        try:
             if interaction.user.id not in group.membership.members:
                 logger.warning(f"{interaction.user.display_name} tried to perform an action in a group they are not a member of: Group {group.name}")
                 await interaction.followup.send("You are not a member of this group.", ephemeral=True)
                 return
+        except Exception as e:
+            logger.error(f"Error checking group membership: {e}")
+            await interaction.followup.send("There was an error checking your membership status.", ephemeral=True)
+            return
 
-            # Handle the actions based on the button or interaction clicked
+        # Handle the actions based on the button or interaction clicked
+        try:
             if action == "leave_group":
                 await self.leave_group(interaction, group)
             elif action == "end_group":
@@ -649,9 +697,8 @@ class StudyGroupCog(commands.Cog):
             else:
                 logger.warning(f"Unknown action '{action}' received for group {group_id}.")
                 await interaction.followup.send("Unknown action. Please try again.", ephemeral=True)
-
         except Exception as e:
-            logger.error(f"Error processing component interaction: {e}")
+            logger.error(f"Error processing action '{action}' for group {group_id}: {e}")
             await interaction.followup.send(f"An error occurred while processing your request: {e}", ephemeral=True)
 
  
