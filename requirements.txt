@@ -1,7 +1,7 @@
 discord.py==2.4.0
 python-dotenv==1.0.0
 asyncio==3.4.3
-sqlite3==3.12.5
+sqlite3
 re
 datetime
 time
