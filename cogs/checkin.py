@@ -7,17 +7,20 @@ import asyncio
 import logging
 import random
 import uuid
+import sys
 
 # Setting up basic configuration for logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+current_namespace = sys.modules[__name__].__name__.split('.')[-1]
+
 
 class CheckinSession:
     min_duration = 20  # 20 seconds as the minimum duration
     max_members = 10  # 10 members are allowed max
     max_absences = 3  # max absences are 3
 
-    def __init__(self, session_id, creator, channel_id, members, duration):
+    def __init__(self, session_id, creator : discord.Member, channel_id, members, duration):
         self.session_id = session_id  # Unique session ID
         self.creator = creator
         self.channel_id = channel_id  # Store the channel ID where the session was created
@@ -123,7 +126,7 @@ class CheckinSession:
         return "You are not in the session. based on members check"
 
     ## Button Function - End Session
-    async def end_session(self, interaction: discord.Interaction, bot: commands.Bot, button_session_id: str, session):
+    async def end_session(self, interaction: discord.Interaction, bot: commands.Bot, button_session_id: str, session : 'CheckinSession'):
         # End the session and send the final message
         logger.info(f"End session initiated by {interaction.user.display_name} for session {button_session_id}.")
 
@@ -289,9 +292,9 @@ class CheckinCog(commands.Cog):
         if not initial:
             view.add_item(discord.ui.Button(label='Present', style=discord.ButtonStyle.success, custom_id=f'present_{session.session_id}'))
 
-        view.add_item(discord.ui.Button(label='Join', style=discord.ButtonStyle.primary, custom_id=f'{generate_custom_id("join",session.session_id)}'))
-        view.add_item(discord.ui.Button(label='Leave', style=discord.ButtonStyle.danger, custom_id=f'generate_custom_id("leave",session.session_id)'))
-        view.add_item(discord.ui.Button(label='End', style=discord.ButtonStyle.secondary, custom_id=f'{generate_custom_id("end",session.session_id)}'))
+        view.add_item(discord.ui.Button(label='Join', style=discord.ButtonStyle.primary, custom_id=generate_custom_id("join",session.session_id, current_namespace)))
+        view.add_item(discord.ui.Button(label='Leave', style=discord.ButtonStyle.danger, custom_id=generate_custom_id("leave",session.session_id, current_namespace)))
+        view.add_item(discord.ui.Button(label='End', style=discord.ButtonStyle.secondary, custom_id=generate_custom_id("end",session.session_id, current_namespace)))
 
         return view
     
@@ -450,29 +453,32 @@ class CheckinCog(commands.Cog):
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
 
+        if interaction.type != discord.InteractionType.component:
+            return
+        
+        logger.debug(f"Checkin: Interaction Data: {interaction}")
         result = ""
         button_session_id = ""
         session: CheckinSession = None
 
-        if interaction.type != discord.InteractionType.component:
-            return  # Ignore non-button interactions
+        try:
+            button_namespace, action, button_session_id = parse_custom_id(interaction)
 
-        custom_id = interaction.custom_id
-        namespace, action, button_session_id = parse_custom_id(custom_id)
-
-        # Ensure the custom_id belongs to this module
-        current_namespace = __name__.split('.')[-1]
-        if namespace != current_namespace:
-            logger.warning(f"Interaction doesn't belong to: {current_namespace}. Interaction belongs to another namespace: {namespace}")
-            return
+            # Now you can use namespace, action, and session_id
+            current_namespace = __name__.split('.')[-1]
+            if button_namespace != current_namespace:
+                logger.warning(f"Interaction doesn't belong to: {current_namespace}. It belongs to another namespace: {button_namespace}")
+                return
+            logger.info(f"")
+        
+        except ValueError as e:
+            logger.error(f"Error processing interaction: {e}")
+            await interaction.response.send_message("There was an error processing your request.", ephemeral=True)
 
         session = await self.check_session_exists(button_session_id, interaction)
         if not session:
             return  # Session does not exist, message already sent
 
-        if namespace != "checkin":
-            logger.info(f"Button interacted was not from 'checkin' module, it was from {namespace} module ")
-            return
 
         if session:
             # Handle Present Button
