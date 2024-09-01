@@ -1,7 +1,6 @@
 discord.py==2.4.0
 python-dotenv==1.0.0
 asyncio==3.4.3
-re
 datetime
 time
 pymongo[srv]==4.5.1
