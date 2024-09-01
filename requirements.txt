@@ -5,3 +5,8 @@ sqlite3==3.12.5
 re
 datetime
 time
+pymongo[srv]==4.5.1
+dnspython==2.3.0
+motor==3.0.0 
+python-dotenv==1.0.0  
+
