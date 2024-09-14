@@ -6,8 +6,11 @@ from datetime import datetime
 import time
 import logging
 import sys
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
+
+### Parsing Time Functions
 
 def parse_seconds_to_hms(seconds: int) -> str:
     hours, remainder = divmod(seconds, 3600)
@@ -38,6 +41,9 @@ def parse_duration(duration_str):
     logger.debug(f"Parsed duration '{duration_str}' to {result} seconds")
     return result
 
+
+
+### Mentions Function
 def parse_mentions(interaction: discord.Interaction, mentions : str):
     logger.info(f"Parsing mentions: {mentions}")
     logger.info(f"Interaction User: {interaction.user} and Interaction Guild: {interaction.guild}")
@@ -58,10 +64,12 @@ def parse_mentions(interaction: discord.Interaction, mentions : str):
                 members.append(member)
                 logger.info(f"Added member with username: {member.name}")
         
-        members.append(interaction.user)
+    members.append(interaction.user)
     
     return list(set(members))  # Remove duplicates
 
+
+### Custom ID Functions
 
 def generate_custom_id(action : str, session_id: str, namespace: str) -> str:
     """
@@ -72,7 +80,6 @@ def generate_custom_id(action : str, session_id: str, namespace: str) -> str:
     :return: A custom ID string in the format "namespace~action~session_id".
     """
     return f"{namespace}~{action}~{session_id}"
-
 
 def parse_custom_id(interaction: discord.Interaction) -> tuple:
     """
@@ -107,8 +114,107 @@ def parse_custom_id(interaction: discord.Interaction) -> tuple:
 
 
 
+### Validation Functions
 
-### Assign Roles
+async def validate_parameters(
+    interaction: discord.Interaction,
+    name: Optional[str] = None,
+    max_size: Optional[int] = None,
+    mentions: Optional[str] = None,
+    category: Optional[discord.CategoryChannel] = None,
+    duration: Optional[str] = None,
+    min_duration: Optional[int] = None,
+    max_members: Optional[int] = None
+) -> Optional[bool]:
+    """
+    A unified parameter validation function for all modules (Checkin, Study Group)
+    Parameters are optional, and validation will only be performed for those passed.
+    Parameters:
+    - name: Name - Study Group
+    - max_size: The maximum no of members - Checkin, Study Group 
+    - mentions: List of Member IDs - Checkin, Study Group
+    - category: Category of Study Group
+    Minimums and Maximum Values:
+    - min_duration: The minimum duration of Checkin reminder
+    - max_members: The maximum no of members - Checkin, Study Group
+
+    """
+    try:
+        # 1. Validate the group name if provided
+        if name is not None:
+            if not name or len(name) > 100:
+                await interaction.followup.send("Invalid group name. The name must be non-empty and less than 100 characters.", ephemeral=True)
+                logger.warning(f"Invalid group name provided: {name} by user {interaction.user}")
+                return False
+
+        # 2. Validate max size if provided
+        if max_size is not None:
+            if max_size <= 0:
+                await interaction.followup.send(f"Invalid max_size: {max_size}. It must be a positive number.", ephemeral=True)
+                logger.warning(f"Invalid max_size ({max_size}) provided by user {interaction.user}")
+                return False
+
+        # 3. Validate mentions if provided (fetching Members by IDs)
+        if mentions is not None:
+            guild = interaction.guild
+            members = [guild.get_member(member_id) for member_id in mentions]  # Fetch Members by IDs
+
+            if not all(members):
+                await interaction.followup.send("One or more members couldn't be found. Please mention valid users.", ephemeral=True)
+                logger.warning(f"Some members in the mentions couldn't be found. User {interaction.user} provided mentions: {mentions}")
+                return False
+
+            if max_size is not None and len(members) > max_size:
+                await interaction.followup.send(f"Too many members specified. Max allowed: {max_size}.", ephemeral=True)
+                logger.warning(f"Too many members ({len(members)}) compared to max_size: {max_size}. User {interaction.user}")
+                return False
+
+        # 4. Validate category if provided
+        if category is not None:
+            if category not in interaction.guild.categories:
+                await interaction.followup.send("No valid category specified. Please provide a valid category.", ephemeral=True)
+                logger.warning(f"Invalid category provided: {category}. User {interaction.user}")
+                return False
+
+        # 5. Validate duration if provided (for check-in)
+        if duration is not None:
+            duration_seconds = parse_duration(duration)
+            if duration_seconds is None:
+                await interaction.followup.send("Wrong duration format used. Please provide a valid duration like '2d 14h 25m 30s'.", ephemeral=True)
+                logger.warning(f"Wrong duration format entered by user {interaction.user}: {duration}")
+                return False
+            if min_duration is not None and duration_seconds < min_duration:
+                await interaction.followup.send(f"Duration must be at least {parse_seconds_to_hms(min_duration)}.", ephemeral=True)
+                logger.warning(f"Attempted to start a session with insufficient duration by user {interaction.user}. Entered duration: {duration_seconds} (minimum: {min_duration} seconds).")
+                return False
+
+        # 6. Validate max members if provided (for check-in)
+        if max_members is not None and mentions is not None:
+            if len(mentions) > max_members:
+                await interaction.followup.send(f"Too many members for the session. Maximum allowed is {max_members}.", ephemeral=True)
+                logger.warning(f"Too many members ({len(mentions)}) compared to max_members: {max_members}. User {interaction.user}")
+                return False
+
+        return True
+
+    except discord.Forbidden as forbidden_e:
+        logger.error(f"Permission error during validation by user {interaction.user}: {forbidden_e}")
+        await interaction.followup.send(f"Permission error occurred during validation: {forbidden_e}", ephemeral=True)
+        return False
+
+    except discord.HTTPException as http_e:
+        logger.error(f"HTTP error during validation by user {interaction.user}: {http_e}")
+        await interaction.followup.send(f"HTTP error occurred during validation: {http_e}", ephemeral=True)
+        return False
+
+    except Exception as e:
+        logger.critical(f"Unexpected error during validation by user {interaction.user}: {e}")
+        await interaction.followup.send(f"An unexpected error occurred during validation: {e}", ephemeral=True)
+        return False
+
+
+
+### Members and Roles Functions
 
 async def assign_role_to_user(member: discord.Member, role: discord.Role):
     """
