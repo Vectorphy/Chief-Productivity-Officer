@@ -8,6 +8,8 @@ import logging
 import random
 import uuid
 import sys
+from discord.ui import Button, View
+from typing import List
 
 # Setting up basic configuration for logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -20,10 +22,10 @@ class CheckinSession:
     max_members = 10  # 10 members are allowed max
     max_absences = 3  # max absences are 3
 
-    def __init__(self, session_id, creator : discord.Member, channel_id, members, duration):
-        self.session_id = session_id  # Unique session ID
-        self.creator = creator
-        self.channel_id = channel_id  # Store the channel ID where the session was created
+    def __init__(self, interaction : discord.Interaction, members : List[discord.Member], duration : str, cog: 'CheckinCog'):
+        self.session_id = self.generate_session_id()
+        self.creator = interaction.user
+        self.text_channel = interaction.channel  # Store the channel ID where the session was created
         self.members = members
         self.start_time = datetime.now()
         self.duration = duration
@@ -33,6 +35,8 @@ class CheckinSession:
         self.last_reminder_message: discord.Message = None  # Track the last reminder message
         self.reminder_count = 0
         self.max_sessions_per_user = 5
+        self.guild = interaction.guild
+        self.cog : CheckinCog = cog
         self.prompt_messages = [
             "How's your progress?",
             "Any updates on your task?",
@@ -46,26 +50,31 @@ class CheckinSession:
         ]
         logger.debug("Check-in session created with duration: %s seconds", duration)
 
-    """Helper and Update Functions"""
+    ## Helper Function - Generate Session ID
+    def generate_session_id(self):
+        return str(uuid.uuid4())  # Generates a random unique session ID
+    
+    
+    """Attendance Functions"""
 
-    
-    ## Helper Function - Increment Reminder Count
-    def increment_reminder(self):
+    ## Attendance Function - Increment Reminder Count
+    def increment_reminder(self) -> None:
         self.reminder_count += 1
+        logger.debug(f"Incremented reminder count to: {self.reminder_count}")
     
     
-    ## Helper Function - Move People to Absent
-    def move_to_absent(self):
+    ## Attendance Function - Move People to Absent
+    def move_to_absent(self) -> List[discord.Member]:
         # Move all present members to absent at the start of each reminder. 
         self.present = []
         logger.debug("Moving members to absent.")
         return self.members  # Everyone is absent until marked present again
 
 
-    ## Helper Function - Update Absences List
-    def update_absences(self):
+    ## Attendance Function - Update Absences List
+    def update_absences(self) -> List[discord.Member]:
         # Increment absences for members in the Absent list. 
-        removed_members = []
+        removed_members : List[discord.Member] = []
         for member in self.members:
             if member not in self.present:
                 self.absences[member] += 1
@@ -80,27 +89,62 @@ class CheckinSession:
         return removed_members
 
 
+
+    """Button Functions"""
+
+
+    ## Button Function - Create Buttons
+    def create_buttons(self, initial=False) -> discord.ui.View:
+        # Create the buttons    
+        present_button : discord.Button = Button(label='Present', style=discord.ButtonStyle.success)
+        join_button : discord.Button = Button(label='Join', style=discord.ButtonStyle.primary)
+        leave_button : discord.Button = Button(label='Leave', style=discord.ButtonStyle.danger)
+        end_button : discord.Button = Button(label='End', style=discord.ButtonStyle.secondary)
+
+        # Assign callbacks
+        present_button.callback = self.mark_present_callback
+        join_button.callback = self.join_session_callback
+        leave_button.callback = self.leave_session_callback
+        end_button.callback = self.end_session_callback
+
+        # Create View
+        view = discord.ui.View()
+        if not initial:
+            view.add_item(present_button)
+        view.add_item(join_button)
+        view.add_item(leave_button)
+        view.add_item(end_button)
+
+        return view
+    
+
+
     """Button Functions"""
 
     ## Button Function - Mark Present
-    def mark_present(self, user):
+    async def mark_present_callback(self, interaction: discord.Interaction):
+        user : discord.Member = interaction.user
         # Mark present and update absent list
         if user in self.exited or user not in self.members:
-            return "You are not part of this session."
+            await interaction.response.send_message(f"You are not part of this session.", ephemeral=True)
+            return
 
         if user in self.present:
-            return "You are already marked as present."
+            await interaction.response.send_message("You are already marked as present.", ephemeral=True)
+            return
 
         self.present.append(user)
         self.absences[user] = 0
-        return "You are marked as present."
+        await interaction.response.send_message("You are marked as present.", ephemeral=True)
+        await self.update_embed()
 
 
     ## Button Function - Join Session
-    def join_session(self, user):
-        
+    async def join_session_callback(self, interaction : discord.Interaction):
+        user : discord.Member = interaction.user
         if user in self.members:
-            return "You are already in the session."
+            await interaction.response.send_message("You are already in the session.", ephemeral=True)
+            return
 
         if user in self.exited:
             self.exited.remove(user)
@@ -109,77 +153,166 @@ class CheckinSession:
         self.present.append(user)
         self.absences[user] = 0
 
-        return "You have joined the session."
+        await interaction.response.send_message("You have joined the session.", ephemeral=True)
+        await self.update_embed()
 
 
     ## Button Function - Leave Session
-    def leave_session(self, user):
+    async def leave_session_callback(self, interaction : discord.Interaction):
         # Remove user from the session and update absent and members lists
-
+        user : discord.Member = interaction.user
         if user in self.present:
             self.present.remove(user)
         if user in self.members:
             self.members.remove(user)
             self.exited.append(user)
             del self.absences[user]
-            return "You have left the session."
-        return "You are not in the session. based on members check"
+            await interaction.response.send_message("You have left the session.", ephemeral=True)
+            await self.update_embed()
+            return
+        await interaction.response.send_message("You are not in the session", ephemeral=True)
+        
 
     ## Button Function - End Session
-    async def end_session(self, interaction: discord.Interaction, bot: commands.Bot, button_session_id: str, session : 'CheckinSession'):
-        # End the session and send the final message
-        logger.info(f"End session initiated by {interaction.user.display_name} for session {button_session_id}.")
+    async def end_session_callback(self, interaction: discord.Interaction):
+        logger.info(f"End session initiated by {interaction.user.display_name} for session {self.session_id}.")
 
-        # Verify that the user is the creator
-        if not session.can_end(interaction.user):
-            return "Only the session creator can end the session."
+        if not self.can_end(interaction.user):
+            await interaction.response.send_message("Only the session creator can end the session.", ephemeral=True)
+            return
 
-        # Send a final message to the channel indicating the session has ended
         embed = discord.Embed(
             title="Check-in Session Ended",
-            description=f"The session has been manually ended by {session.creator.display_name}.",
+            description=f"The session has been manually ended by {self.creator.display_name}.",
             color=discord.Color.red()
         )
-        embed.set_footer(text=f"Session created by {session.creator.display_name}")
+        embed.set_footer(text=f"Session created by {self.creator.display_name}")
 
         try:
-            # Send the final message to the channel
-            logger.debug(f"Sending final end session message in session {button_session_id}.")
             await interaction.channel.send(embed=embed)
-
         except discord.HTTPException as e:
-            logger.error(f"Failed to send end session message for session {button_session_id}: {str(e)}")
+            logger.error(f"Failed to send end session message for session {self.session_id}: {str(e)}")
 
-        cog = bot.get_cog("CheckinCog")
-        # Disable the buttons of the last reminder message
-        if cog:
-            if button_session_id in cog.active_sessions:
-                logger.info(f"Deleting session for session ID {button_session_id} from active_sessions.")
-                del cog.active_sessions[button_session_id]
-                # Explicitly clear the session's data
-                await self.clear_session_data()
-            else:
-                logger.warning(f"Tried to delete session for session ID {button_session_id} but it was already deleted.")
+        await self.clear_session_data()
+        await self.disable_previous_buttons(interaction.channel)
 
-            # Disable buttons in the last reminder message using the method from the CheckinCog class
+        logger.info(f"Check-in session {self.session_id} successfully ended by {interaction.user.display_name}.")
+        await interaction.response.send_message("Check-in session has been manually ended.", ephemeral=True)
+
+
+    """Message Functions"""
+
+    ## Embed Function - Create Embed
+    def create_embed(self, initial=False):    
+        # Create the embed for the session. 
+        embed = discord.Embed(
+            title="Let's get started!" if initial else random.choice(self.prompt_messages),
+            color=discord.Color.blue()
+        )
+        embed.set_author(name=f"{self.creator.display_name}'s Check-in session")
+        embed.add_field(name="Check-in Started", value=f"<t:{int(self.start_time.timestamp())}:R>", inline=True)
+        embed.add_field(name="Duration", value=f"{parse_seconds_to_hms(self.duration)}", inline=True)
+        embed.add_field(name="Members", value=", ".join([member.mention for member in self.members]), inline=False)
+
+        # Present
+        embed.add_field(
+            name="Present",
+            value="\n".join([member.mention for member in self.present]) or "No one yet!",
+            inline=True
+        )
+        # Absent
+        absent_members = [
+            f"{member.mention} ({self.absences[member]})" if self.absences[member] >= CheckinSession.max_absences - 1 else member.mention
+            for member in self.members if member not in self.present
+        ]
+        embed.add_field(name="Absent", value="\n".join(absent_members) or "Everyone is Present!", inline=True)
+
+        # Exited/Dropped
+        embed.add_field(
+            name="Exited/Dropped",
+            value="\n".join([member.mention for member in self.exited]) or "None",
+            inline=True
+        )
+        embed.set_footer(text=f"Created by {self.creator.display_name}")
+
+        return embed
+
+
+    ## Embed Function - Update Embed
+    async def update_embed(self) -> None:
+        # Update the message embed after any interaction. 
+        if self.last_reminder_message:
+
+            embed = self.create_embed()
+            await self.last_reminder_message.edit(embed=embed)
+    
+    
+    ## Message Function - Send Initial Message
+    async def send_initial_message(self):
+        embed = self.create_embed(initial=True)
+        view = self.create_buttons(initial=True)
+        initial_message = await self.text_channel.send(embed=embed, view=view)
+
+        self.last_reminder_message = initial_message
+
+        # Start the reminder loop
+        self.cog.bot.loop.create_task(self.run_checkin_reminders())
+
+
+    ## Message Function - Send Reminder Message
+    async def run_checkin_reminders(self):
+        while True:
+            await asyncio.sleep(self.duration)
+
+            self.increment_reminder()
+            await self.disable_previous_buttons(self.text_channel)
+
+            self.move_to_absent()
+            removed_members = self.update_absences()
+
+            if not self.members:
+                embed = discord.Embed(
+                    title="Check-in Session Ended",
+                    description="No more members are left in the session.",
+                    color=discord.Color.red()
+                )
+                logger.info("Session ended due to no remaining members.")
+                await self.text_channel.send(embed=embed)
+                return
+
+            members_mention_msg = ", ".join([member.mention for member in self.members])
+            embed = self.create_embed()
+            view = self.create_buttons()
+            reminder_message = await self.text_channel.send(content=members_mention_msg, embed=embed, view=view)
+
+            self.last_reminder_message = reminder_message
+            logger.info(f"Reminder {self.reminder_count} sent with updated members.")
+
+
+    ## Message Function - Disable Previous Buttons    
+    async def disable_previous_buttons(self, channel: discord.TextChannel):
+        if self.last_reminder_message:
             try:
-                # Disable buttons in the last reminder message using the method from the CheckinCog class
-                await cog.disable_previous_buttons(session, interaction.channel)
-                logger.info(f"End Session Function: Successfully disabled previous buttons in session {button_session_id}.")
+                last_message = await channel.fetch_message(self.last_reminder_message.id)
+                new_view = View()
+
+                for component in last_message.components:
+                    for item in component.children:
+                        if isinstance(item, discord.ui.Button):
+                            item.disabled = True
+                            new_view.add_item(item)
+
+                await last_message.edit(view=new_view)
+                logger.info("Disabled buttons in the previous reminder message.")
+
+            except discord.NotFound:
+                logger.warning(f"Previous reminder message not found (ID: {self.last_reminder_message.id}).")
             except discord.HTTPException as e:
-                logger.error(f"End Session Function: Failed to disable previous buttons in session {button_session_id}: {str(e)}")
+                logger.error(f"Failed to disable buttons in previous reminder message: {str(e)}")
             except Exception as e:
-                logger.error(f"End Session Function: An error occurred while disabling previous buttons in session {button_session_id}: {str(e)}")
-
-
-
-        # Send a confirmation message to the creator (optional)
-        logger.info(f"Check-in session {button_session_id} successfully ended by {interaction.user.display_name}.")
-
-        # Return the response message for the user
-        return f"Check-in session has been manually ended by {session.creator.mention}."
+                logger.error(f"Unexpected error disabling buttons: {str(e)}")
     
-    
+
 
     """End Session Helper Functions"""
     ## Helper Function - Can End
@@ -196,6 +329,7 @@ class CheckinSession:
         self.absences.clear()
         self.last_reminder_message = None
         self.reminder_count = 0
+        self.cog.active_sessions.pop(self.session_id)
         logger.debug(f"Session data for session {self.session_id} cleared successfully.")
 
 
@@ -209,187 +343,6 @@ class CheckinCog(commands.Cog):
         self.bot = bot
         self.active_sessions = {}
         logger.debug("Check-in Cog initialized.")
-
-    
-
-    """Helper Functions"""
-
-    ## Helper Function - Generate Session ID
-    def generate_session_id(self):
-        return str(uuid.uuid4())  # Generates a random unique session ID
-    
-    ## Helpper Function - Check if the user is in ANY session
-    async def check_session_exists(self, session_id: str, interaction: discord.Interaction) -> CheckinSession:
-        # Check if a session exists by session ID
-        session: CheckinSession = self.active_sessions.get(session_id)
-        if not session:
-            logger.warning(f"Session with ID {session_id} does not exist.")
-            await interaction.response.send_message("The session you're interacting with no longer exists.", ephemeral=True)
-            return None
-        return session
-
-    ## Helper Function - Check if user is in session (Optional)
-    async def check_user_in_session(self, session: CheckinSession, user: discord.User, interaction: discord.Interaction) -> bool:
-        # Check if the user is part of the session
-        if user not in session.members:
-            logger.info(f"User {user.display_name} tried to interact with a session they're not part of.")
-            await interaction.response.send_message("You are not part of this session.", ephemeral=True)
-            return False
-        return True
-
-
-
-    """Embed & Button Functions"""
-
-    ## Embed Function - Create Embed
-    def create_embed(self, session : CheckinSession, initial=False):    
-        # Create the embed for the session. 
-        embed = discord.Embed(
-            title="Let's get started!" if initial else random.choice(session.prompt_messages),
-            color=discord.Color.blue()
-        )
-        embed.set_author(name=f"{session.creator.display_name}'s Check-in session #{len(self.active_sessions)}")
-        embed.add_field(name="Check-in Started", value=f"<t:{int(session.start_time.timestamp())}:R>", inline=True)
-        embed.add_field(name="Duration", value=f"{parse_seconds_to_hms(session.duration)}", inline=True)
-        embed.add_field(name="Members", value=", ".join([member.mention for member in session.members]), inline=False)
-
-        # Present
-        embed.add_field(
-            name="Present",
-            value="\n".join([member.mention for member in session.present]) or "No one yet!",
-            inline=True
-        )
-        # Absent
-        absent_members = [
-            f"{member.mention} ({session.absences[member]})" if session.absences[member] >= CheckinSession.max_absences - 1 else member.mention
-            for member in session.members if member not in session.present
-        ]
-        embed.add_field(name="Absent", value="\n".join(absent_members) or "Everyone is Present!", inline=True)
-
-        # Exited/Dropped
-        embed.add_field(
-            name="Exited/Dropped",
-            value="\n".join([member.mention for member in session.exited]) or "None",
-            inline=True
-        )
-        embed.set_footer(text=f"Created by {session.creator.display_name}")
-
-        return embed
-
-
-    ## Embed Function - Update Embed
-    async def update_embed(self, message, session : CheckinSession):
-        # Update the message embed after any interaction. 
-        embed = self.create_embed(session)
-        await message.edit(embed=embed)
-    
-
-    ## Button Function - Create Buttons
-    def create_buttons(self, session : CheckinSession, initial=False):
-        # Create the button view for the session. 
-        view = discord.ui.View()
-
-        if not initial:
-            view.add_item(discord.ui.Button(label='Present', style=discord.ButtonStyle.success, custom_id=f'present_{session.session_id}'))
-
-        view.add_item(discord.ui.Button(label='Join', style=discord.ButtonStyle.primary, custom_id=generate_custom_id("join",session.session_id, current_namespace)))
-        view.add_item(discord.ui.Button(label='Leave', style=discord.ButtonStyle.danger, custom_id=generate_custom_id("leave",session.session_id, current_namespace)))
-        view.add_item(discord.ui.Button(label='End', style=discord.ButtonStyle.secondary, custom_id=generate_custom_id("end",session.session_id, current_namespace)))
-
-        return view
-    
-
-
-    """Message Functions"""
-
-    ## Message Function - Send Initial Message
-    async def send_initial_message(self, channel, session : CheckinSession):
-        # Create and send the initial message
-        embed = self.create_embed(session, initial=True)
-        view = self.create_buttons(session, initial=True)
-        initial_message = await channel.send(embed=embed, view=view)
-
-        session.last_reminder_message = initial_message
-
-        # Start the reminder loop
-        self.bot.loop.create_task(self.run_checkin_reminders(channel, session))
-
-
-    ## Message Function - Send Reminder Message
-    async def run_checkin_reminders(self, channel, session : CheckinSession):    
-
-        while session.session_id in self.active_sessions:
-            await asyncio.sleep(session.duration)
-
-            # Check if session still exists in active_sessions
-            if session.session_id not in self.active_sessions:
-                logger.info(f"Session {session.session_id} has ended and was removed. Stopping reminder loop.")
-                return  # Break out of the reminder loop since the session has ended.
-            
-            logger.info(f"Session {session.session_id} exists and it continues.")
-            
-            # Increment reminder_count
-            session.increment_reminder()
-
-            # First, disable the buttons of the previous reminder message
-            await self.disable_previous_buttons(session, channel)
-
-            # Move present members to absent, update absences, and handle removals
-            session.move_to_absent()
-            removed_members = session.update_absences()
-
-            # If no members left, end the session
-            if not session.members:
-                embed = discord.Embed(
-                    title="Check-in Session Ended",
-                    description="No more members are left in the session.",
-                    color=discord.Color.red()
-                )
-                logger.info("Session ended due to no remaining members.")
-                await channel.send(embed=embed)
-                return
-
-            members_mention_msg = ", ".join([member.mention for member in session.members])
-            # Send the reminder message
-            embed = self.create_embed(session)
-            view = self.create_buttons(session)
-            reminder_message = await channel.send(content = members_mention_msg, embed=embed, view=view)
-
-            session.last_reminder_message = reminder_message
-
-            logger.info(f"Reminder {session.reminder_count} sent with updated members.")
-
-
-    ## Message Function - Disable Previous Buttons    
-    async def disable_previous_buttons(self, session: CheckinSession, channel: discord.TextChannel):
-        
-        # Disable the buttons in the last reminder message, if it exists
-        if session.last_reminder_message:
-            try:
-                # Fetch the last reminder message from the channel
-                last_message = await channel.fetch_message(session.last_reminder_message.id)
-
-                # Create a new view
-                new_view = discord.ui.View()
-
-                # Loop through the components and disable the buttons
-                for component in last_message.components:
-                    for item in component.children:
-                        if isinstance(item, discord.ui.Button):
-                            item.disabled = True  # Disable each button
-                            new_view.add_item(item)  # Add the disabled button to the new view
-
-                # Edit the last reminder message to disable the buttons
-                await last_message.edit(view=new_view)
-                logger.info("Disabled buttons in the previous reminder message.")
-
-            except discord.NotFound:
-                logger.warning(f"Previous reminder message not found (ID: {session.last_reminder_message.id}).")
-            except discord.HTTPException as e:
-                logger.error(f"Failed to disable buttons in previous reminder message: {str(e)}")
-            except Exception as e:
-                logger.error(f"Unexpected error disabling buttons: {str(e)}")
-
 
 
 
@@ -426,115 +379,14 @@ class CheckinCog(commands.Cog):
             await interaction.response.send_message("No valid members found in the mentions. Please mention valid users or roles.", ephemeral=True)
             return
 
-        # Check - User exceeded max sessions
-        user_sessions = [sid for sid, s in self.active_sessions.items() if s.creator == interaction.user and s.channel_id == interaction.channel.id]
-        if len(user_sessions) >= 5:  # Arbitrary limit, change as needed
-            await interaction.response.send_message(f"{interaction.user.display_name}, you already have the maximum number of active sessions in this channel.")
-            return
-        
-        # Add - Add creator in the members list
-        if interaction.user not in members:
-            members.append(interaction.user)
-        
-        # Generate a unique session ID for the new session
-        session_id = self.generate_session_id()
         
         # Create a new session and save it
-        session = CheckinSession(session_id=session_id, creator=interaction.user, channel_id=interaction.channel.id, members=members, duration=duration_seconds)
-        self.active_sessions[session_id] = session  # Store session by its ID
-        logger.info(f"Check-in session with ID {session_id} started by {interaction.user.display_name} in channel {interaction.channel.id}.")
+        session = CheckinSession(interaction = interaction, members=members, duration=duration_seconds, cog=self)
+        self.active_sessions[session.session_id] = session  # Store session by its ID
+        logger.info(f"Check-in session with ID {session.session_id} started by {interaction.user.display_name} in channel {interaction.channel.id}.")
 
         # Send the initial message with buttons
-        await self.send_initial_message(interaction.channel, session)
-
-
-    
-    ## Listener - Button Clicks
-    @commands.Cog.listener()
-    async def on_interaction(self, interaction: discord.Interaction):
-
-        if interaction.type != discord.InteractionType.component:
-            return
-        
-        logger.debug(f"Checkin: Interaction Data: {interaction}")
-        result = ""
-        button_session_id = ""
-        session: CheckinSession = None
-
-        try:
-            button_namespace, action, button_session_id = parse_custom_id(interaction)
-
-            # Now you can use namespace, action, and session_id
-            current_namespace = __name__.split('.')[-1]
-            if button_namespace != current_namespace:
-                logger.warning(f"Interaction doesn't belong to: {current_namespace}. It belongs to another namespace: {button_namespace}")
-                return
-            logger.info(f"")
-        
-        except ValueError as e:
-            logger.error(f"Error processing interaction: {e}")
-            await interaction.response.send_message("There was an error processing your request.", ephemeral=True)
-
-        session = await self.check_session_exists(button_session_id, interaction)
-        if not session:
-            return  # Session does not exist, message already sent
-
-
-        if session:
-            # Handle Present Button
-            if action == 'present':
-                result = session.mark_present(interaction.user)
-
-            # Handle Join Button
-            elif action == 'join':
-                result = session.join_session(interaction.user)
-
-            # Handle Leave Button
-            elif action == 'leave':
-                result = session.leave_session(interaction.user)
-
-            # Handle End Button
-            elif action == 'end':
-                logger.debug(f"User {interaction.user.display_name} clicked the 'End' button for session {button_session_id}.")
-
-                # Retrieve the session using session_id
-                session =  self.active_sessions.get(button_session_id)
-
-                # Check if the user has permission to end the session (must be the creator)
-                if session and session.can_end(interaction.user):
-                    
-                    try:
-                        # Disable buttons in the last reminder message using the method from the CheckinCog class
-                        await self.disable_previous_buttons(session, interaction.channel)
-                        logger.info(f"Cog Event Listener: Successfully disabled previous buttons in session {button_session_id}.")
-                    except discord.HTTPException as e:
-                        logger.error(f"Cog Event Listener: Failed to disable previous buttons in session {button_session_id}: {str(e)}")
-                    except Exception as e:
-                        logger.error(f"Cog Event Listener: An error occurred while disabling previous buttons in session {button_session_id}: {str(e)}")
-                    
-                    logger.info(f"User {interaction.user.display_name} is the creator and has permission to end the session.")
-                    response = await session.end_session(interaction, self.bot, button_session_id, session)
-                    
-                    logger.debug("Sending response message to the user indicating the session was ended.")
-                    await interaction.response.send_message(response)
-                    
-                    logger.info("Session ended successfully. No further interaction will be processed.")
-                    return
-                
-                else:
-                    # If the user is not the creator or session is not found, log the denial
-                    logger.warning(f"User {interaction.user.display_name} tried to end the session but is not the creator or session does not exist.")
-                    result = "Only the session creator can end the session."
-
-        # If there's a result, send it as a follow-up
-        if result:
-            await interaction.response.defer()
-            await interaction.followup.send(result, ephemeral=True)
-
-        # Update the embed after the interaction
-        await self.update_embed(interaction.message, session)
-
-
+        await session.send_initial_message()
 
 
 """Setup Bot"""
