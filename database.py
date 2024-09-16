@@ -23,6 +23,15 @@ class DBHandler:
         async with self.lock:
             cursor = self.conn.cursor()
             
+            # Check if the info_embed_id column exists
+            cursor.execute("PRAGMA table_info(study_groups_db);")
+            columns = [column[1] for column in cursor.fetchall()]
+
+            # If info_embed_id column does not exist, add it
+            if 'info_embed_id' not in columns:
+                cursor.execute('ALTER TABLE study_groups_db ADD COLUMN info_embed_id INTEGER DEFAULT 0;')
+                logger.info("Added 'info_embed_id' column to 'study_groups_db' table.")
+            
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS study_groups_db (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,6 +45,7 @@ class DBHandler:
                 group_role_id INTEGER DEFAULT 0,
                 vc_id INTEGER DEFAULT 0,
                 text_id INTEGER DEFAULT 0,
+                info_embed_id INTEGER DEFAULT 0,
                 speak_enabled BOOLEAN DEFAULT 1,
                 video_mode TEXT DEFAULT 'off',
                 video_timer INTEGER DEFAULT 10,
@@ -126,11 +136,11 @@ class DBHandler:
             cursor.execute('''
             INSERT INTO study_groups_db (
                 guild_id, name, group_id, creator_id, owner_id, category_id, 
-                max_members, group_role_id, vc_id, text_id, 
+                max_members, group_role_id, vc_id, text_id, info_embed_id, 
                 speak_enabled, video_mode, video_timer, 
                 start_time, end_time, duration, active
             ) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 study_group_data["guild_id"],
                 study_group_data["name"],
@@ -142,13 +152,13 @@ class DBHandler:
                 study_group_data["group_role_id"],
                 study_group_data["vc_id"],
                 study_group_data["text_id"],
+                study_group_data["info_embed_id"],
                 study_group_data["speak_enabled"],
                 study_group_data["video_mode"],
                 study_group_data["video_timer"],
                 study_group_data["start_time"],
                 study_group_data["end_time"],
                 study_group_data["duration"],
-                study_group_data["info_embed_id"],
                 study_group_data["active"]
             ))
             self.conn.commit()
@@ -156,7 +166,7 @@ class DBHandler:
         
 
     ### Update Study Group
-    async def update_study_group(self, study_group_data: Dict[str, Any]) -> None:
+    async def update_study_group_by_id(self, study_group_data: Dict[str, Any]) -> None:
         # List of fields to update dynamically
         fields_to_update = []
         values = []
@@ -185,6 +195,11 @@ class DBHandler:
         if "text_id" in study_group_data:
             fields_to_update.append("text_channel_id = ?")
             values.append(study_group_data["text_id"])
+        
+        if "info_embed_id" in study_group_data:
+            fields_to_update.append("info_embed_id = ?")
+            values.append(study_group_data["info_embed_id"])
+
 
         if "vc_id" in study_group_data:
             fields_to_update.append("voice_channel_id = ?")
