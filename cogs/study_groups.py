@@ -450,7 +450,7 @@ class StudyGroup:
             embed.add_field(name="Speak", value="On" if self.speak_enabled else "Off", inline=True)
 
              # If updating an existing message
-            if update and hasattr(self, 'info_embed_id'):
+            if update and (self.info_embed_id == 0 or self.info_embed_id == None or hasattr(self, "info_embed_id")):
                 try:
                     # Fetch the message by ID and edit it
                     message = await text_channel.fetch_message(self.info_embed_id)
@@ -463,7 +463,7 @@ class StudyGroup:
                     self.info_embed_id = new_message.id
                     logger.info(f"Group info embed sent in channel '{text_channel.name}' for group '{self.name}' (new message).")
             
-            else:
+            elif not self.info_embed_id:
                 # Send a new message and store its message ID
                 new_message = await text_channel.send(embed=embed)
                 self.info_embed_id = new_message.id
@@ -523,7 +523,7 @@ class StudyGroup:
         
         role : discord.Role = self.guild.get_role(self.group_role_id)
 
-        await interaction.response.send_message("❗❗Attention❗❗\n{role.mention}\nThe group will be destroyed in 60 seconds.\nPlease disconnect from the VCs and wrap up your activities.")
+        await interaction.response.send_message(f"❗❗Attention❗❗\n{role.mention}\nThe group will be destroyed in 60 seconds.\nPlease disconnect from the VCs and wrap up your activities.")
         asyncio.create_task(self.end_group())
         await interaction.followup.send("End Group function has started. The group will end shortly.")
         logger.info(f"User: {interaction.user.name} has called for the closure of Group'{self.name}', End Group function has started. The group will end shortly.")
@@ -574,7 +574,7 @@ class StudyGroup:
                         logger.info(f"Voice Channel '{old_name}-voice' renamed to '{new_name}-voice'")
                     
                     # Update into database
-                    await self.study_group.db.update_study_group({
+                    await self.study_group.db.update_study_group_by_id({
                         "group_id": self.study_group.group_id,
                         "name": new_name
                     })
@@ -610,7 +610,7 @@ class StudyGroup:
             self.duration += extra_time
             self.end_time : datetime = self.end_time + timedelta(seconds=extra_time)
             # Update in the database (DBHandler function)
-            await self.db.update_study_group({
+            await self.db.update_study_group_by_id({
                 "group_id": self.group_id,
                 "duration": self.duration,
                 "end_time": self.end_time
@@ -716,9 +716,15 @@ class StudyGroup:
             text_channel : discord.TextChannel = self.guild.get_channel(self.text_id)
             voice_channel : discord.VoiceChannel = self.guild.get_channel(self.vc_id)
 
-            await text_channel.send(content="Hey people of {role.mention}\nThe End Function will start in 60 seconds.")
+            # Calculate end timestamp
+            end_timestamp = datetime.now() + timedelta(seconds=60)
+            end_timestamp = int(end_timestamp)
+            countdown_text = f"<t:{end_timestamp}:R>"
+
+            await text_channel.send(content=f"Hey people of {role.mention}\nThe End Function will start in 60 seconds.")
             logger.info(f"The End condition has been triggered. from this namespae: {__name__}")
-            
+            await text_channel.send(content=countdown_text)
+
             await asyncio.sleep(60)
 
             # 1. Handle text channel deletion or permission revoking
@@ -957,10 +963,17 @@ class StudyGroupCog(commands.Cog):
             # If the setup was successful, start the end-condition check
             self.bot.loop.create_task(study_group.check_end_condition())
         
+        # Add the study group to the dictionary
+        self.study_groups[study_group.group_id] = study_group
+        
         # Send a single message to the user with the result of the operation
         await interaction.followup.send(result, ephemeral=True)
+ 
 
 
 async def setup(bot):
     await bot.add_cog(StudyGroupCog(bot))
     logger.info("StudyGroups cog loaded")
+
+
+
