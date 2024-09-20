@@ -388,7 +388,7 @@ class CheckinSession:
                 await interaction.response.send_message("You are already marked as present.", ephemeral=True)
                 return
 
-            self.member_statuses.get(user_id, {}).get("status") == MemberStatus.PRESENT
+            self.member_statuses[user_id]["status"] = MemberStatus.PRESENT
             self.member_statuses[user_id]["absences"] = 0
 
             # Save to DB
@@ -415,7 +415,7 @@ class CheckinSession:
                 return
 
             if user_id in self.member_statuses and self.member_statuses.get(user_id, {}).get("status") == MemberStatus.EXITED:
-                self.member_statuses.get(user_id, {}).get("status") = MemberStatus.PRESENT
+                self.member_statuses[user_id]["status"] = MemberStatus.PRESENT
                 self.member_statuses[user_id]["absences"] = 0
             else:
                 self.member_statuses[user_id] = {"status" : MemberStatus.PRESENT, "absences" : 0}
@@ -446,7 +446,7 @@ class CheckinSession:
                 return
 
             # Mark the user as exited and remove them from active members
-            self.member_statuses.get(user_id, {}).get("status") = MemberStatus.EXITED
+            self.member_statuses[user_id]["status"] = MemberStatus.EXITED
             self.member_statuses[user_id]["absences"] = 0
             self.member_ids.remove(user_id)
 
