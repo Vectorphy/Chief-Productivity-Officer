@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import asyncio
-from utils import parse_seconds_to_hms, parse_mentions, generate_custom_id, parse_custom_id, assign_role_to_user, validate_parameters
+from utils import parse_seconds_to_hms, parse_mentions, validate_parameters
 import logging
 import uuid
 from typing import List
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 current_namespace = sys.modules[__name__].__name__.split('.')[-1]
 
 class StudyGroup:
-    def __init__(self, db, guild_id: int, name: str, creator_id: int, category_id: int, max_members: int, member_ids: List[int]):
+    def __init__(self, db, cog, guild_id: int, name: str, creator_id: int, category_id: int, max_members: int, member_ids: List[int] ):
         # Initializes the StudyGroup class.
         
         # Critical Info first
@@ -29,7 +29,6 @@ class StudyGroup:
         self.category_id : int = category_id
         self.max_members : int = max_members
         self.member_ids : List[int] = member_ids
-        self.db : DBHandler = db
 
         # IDs for roles and channels (will be set later)
         self.group_role_id: int = 0
@@ -51,6 +50,9 @@ class StudyGroup:
         # Final Stuff
         self.active : bool = False
         
+        # Other stuff, not stored in Database
+        self.cog : 'StudyGroupCog' = cog
+        self.db : DBHandler = db
         self.guild : discord.Guild = None
         self.view : View = None
 
@@ -317,7 +319,7 @@ class StudyGroup:
             
             # Update the database after transferring ownership
             await self.db.transfer_ownership_study_group_db(self.group_id, new_owner_id)
-            self.group_info_embed(update=True)
+            await self.group_info_embed(update=True)
 
             logger.info(f"Ownership of group {self.study_group.name} transferred to from {interaction.user.display_name} to {new_owner.display_name}.", ephemeral=True)
             return
@@ -450,7 +452,7 @@ class StudyGroup:
             embed.add_field(name="Speak", value="On" if self.speak_enabled else "Off", inline=True)
 
              # If updating an existing message
-            if update and (self.info_embed_id == 0 or self.info_embed_id == None or hasattr(self, "info_embed_id")):
+            if update and self.info_embed_id:
                 try:
                     # Fetch the message by ID and edit it
                     message = await text_channel.fetch_message(self.info_embed_id)
@@ -463,16 +465,12 @@ class StudyGroup:
                     self.info_embed_id = new_message.id
                     logger.info(f"Group info embed sent in channel '{text_channel.name}' for group '{self.name}' (new message).")
             
-            elif not self.info_embed_id:
+            else:
                 # Send a new message and store its message ID
                 new_message = await text_channel.send(embed=embed)
                 self.info_embed_id = new_message.id
                 logger.info(f"Group info embed sent in channel '{text_channel.name}' for group '{self.name}' (first message).")
 
-
-            new_message : discord.Message = await text_channel.send(embed=embed)
-            self.info_embed_id = new_message.id
-            logger.info(f"Group info embed sent in channel '{text_channel.name}' for group '{self.name}'.")
         
         except Exception as e:
             logger.error(f"Error sending group info embed in channel '{text_channel.name}' for group '{self.name}': {e}")
@@ -580,7 +578,7 @@ class StudyGroup:
                     })
                     
                     # Update Group Info Embed
-                    self.group_info_embed(update=True)
+                    await self.study_group.group_info_embed(update=True)
 
                     # Send a follow-up confirmation message
                     await interaction.followup.send(f"Group renamed to '{new_name}'", ephemeral=True)
@@ -616,7 +614,7 @@ class StudyGroup:
                 "end_time": self.end_time
             })
             
-            self.group_info_embed(update=True)
+            await self.group_info_embed(update=True)
             await interaction.response.send_message(f"Duration extended by 1 hour. New end time: {self.end_time}", ephemeral=True)
             logger.info(f"Duration extended by 1 hour. New end time: {self.end_time}. Database updated.")
         except Exception as e:
@@ -717,8 +715,7 @@ class StudyGroup:
             voice_channel : discord.VoiceChannel = self.guild.get_channel(self.vc_id)
 
             # Calculate end timestamp
-            end_timestamp = datetime.now() + timedelta(seconds=60)
-            end_timestamp = int(end_timestamp)
+            end_timestamp = int((datetime.now() + timedelta(seconds=60)).timestamp())
             countdown_text = f"<t:{end_timestamp}:R>"
 
             await text_channel.send(content=f"Hey people of {role.mention}\nThe End Function will start in 60 seconds.")
@@ -781,8 +778,8 @@ class StudyGroup:
         """Clear all data associated with the study group."""
         try:
             # Remove instance of group from StudyGroupCog
-            if self.group_id in StudyGroupCog.study_groups:
-                StudyGroupCog.study_groups.pop(self.group_id)
+            if self.group_id in self.cog.study_groups:
+                self.cog.study_groups.pop(self.group_id)
 
             
             # Clear critical information
@@ -870,7 +867,7 @@ class StudyGroup:
     async def send_invite(self, interaction, invited_member: discord.Member, send_channel: discord.TextChannel) -> None:
         ### Invite a user to the group
         try:
-            def check(interaction):
+            def check(interaction : discord.Interaction):
                 check_counter = interaction.message == invite_message and interaction.user == invited_member
 
                 if check_counter:
@@ -886,8 +883,8 @@ class StudyGroup:
             )
 
             view = discord.ui.View()
-            view.add_item(discord.ui.Button(label="Accept", style=discord.ButtonStyle.green, emoji="✅", custom_id=generate_custom_id("accept", self.study_group.group_id, current_namespace)))
-            view.add_item(discord.ui.Button(label="Decline", style=discord.ButtonStyle.red, emoji="❌", custom_id=generate_custom_id("decline", self.study_group.group_id, current_namespace)))
+            view.add_item(discord.ui.Button(label="Accept", style=discord.ButtonStyle.green, emoji="✅"))
+            view.add_item(discord.ui.Button(label="Decline", style=discord.ButtonStyle.red, emoji="❌"))
 
             invite_message = await send_channel.send(
                 f"{invited_member.mention}, you have been invited to the group {self.study_group.name}.",
@@ -930,14 +927,14 @@ class StudyGroupCog(commands.Cog):
         await interaction.response.defer()
         
         # Parsing members list into member IDs (will incorporate into parse_mentions directly later)
-        mentioned_members : List[discord.Member] = parse_mentions(interaction, mentions)
-        member_ids : List[int] = [member.id for member in mentioned_members]
+        mentioned_member_ids : List[int] = parse_mentions(interaction, mentions)
+        
         
         # Validate parameters before proceeding
         if not await validate_parameters(
             interaction = interaction,
             name = name,
-            mentions = member_ids,
+            mentions = mentioned_member_ids,
             max_members = max_members,
             category = category,
 
@@ -948,12 +945,13 @@ class StudyGroupCog(commands.Cog):
             
         study_group = StudyGroup(
             db= self.bot.db,
+            cog = self,
             guild_id = interaction.guild.id,
             name = name,
             creator_id = interaction.user.id,
             category_id=category.id,
             max_members=max_members,
-            member_ids=member_ids
+            member_ids=mentioned_member_ids
         )
         
         # Collect result messages
@@ -974,6 +972,3 @@ class StudyGroupCog(commands.Cog):
 async def setup(bot):
     await bot.add_cog(StudyGroupCog(bot))
     logger.info("StudyGroups cog loaded")
-
-
-
