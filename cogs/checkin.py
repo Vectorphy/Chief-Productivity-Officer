@@ -388,7 +388,7 @@ class CheckinSession:
                 await interaction.response.send_message("You are already marked as present.", ephemeral=True)
                 return
 
-            self.member_statuses.get(user_id, {}).get("status") = MemberStatus.PRESENT
+            self.member_statuses.get(user_id, {}).get("status") == MemberStatus.PRESENT
             self.member_statuses[user_id]["absences"] = 0
 
             # Save to DB
