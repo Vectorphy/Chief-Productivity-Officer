@@ -15,6 +15,7 @@ env/
 # IDE/Editor files
 .idea/
 .vscode/
+.idx/
 *.iml
 .project
 .classpath
