@@ -2,14 +2,16 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import logging
+from enum import Enum
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
-class PermissionLevel:
-    BOT_DEVELOPER = 3
-    GUILD_MANAGER = 2
-    GROUP_CREATOR = 1
+class PermissionLevel(Enum):
+    BOT_DEVELOPER = 4
+    GUILD_MANAGER = 3
+    GROUP_OWNER = 2
+    GROUP_MEMBER = 1
     REGULAR_USER = 0
 
 class Manager(commands.Cog):

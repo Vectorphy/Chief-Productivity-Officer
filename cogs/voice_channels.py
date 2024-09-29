@@ -4,6 +4,7 @@ from discord import app_commands
 from discord.ext import commands
 from utils import app_is_manager, is_group_creator
 import logging
+import database
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ class VoiceChannels(commands.Cog):
     @app_is_manager()
     async def create_vc(self, interaction: discord.Interaction, name: str = None):
         logger.info(f"create_vc command invoked by {interaction.user}")
-        group = await self.bot.db.get_study_group(interaction.guild_id)
+        group = await self.bot.db.fetch_study_group_by_id(interaction.guild_id)
         if not group:
             logger.warning(f"No study group exists in server {interaction.guild_id}")
             await interaction.response.send_message("No study group exists in this server.", ephemeral=True)
@@ -141,7 +142,7 @@ class VoiceChannels(commands.Cog):
     async def on_voice_state_update(self, member, before, after):
         logger.debug(f"Voice state update: {member} moved from {before.channel} to {after.channel}")
         if before.channel and not after.channel:
-            group = await self.bot.db.get_study_group(before.channel.guild.id)
+            group = await self.bot.db.fetch_study_group_by_id(before.channel.guild.id)
             if group and group[8] == before.channel.id:
                 logger.debug(f"Member {member} left study group voice channel {before.channel.id}")
                 if not before.channel.members:

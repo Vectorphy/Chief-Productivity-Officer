@@ -6,13 +6,23 @@ from datetime import datetime
 import time
 import logging
 import sys
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
+
+### Parsing Time Functions
 
 def parse_seconds_to_hms(seconds: int) -> str:
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
-    result = f"{hours}h {minutes}m {seconds}s"
+    parts : List[int] = []
+    if hours > 0:
+        parts.append(f"{hours}h")
+    if minutes > 0:
+        parts.append(f"{minutes}m")
+    if seconds > 0 or len(parts) == 0:  # Always show seconds if it's the only component
+        parts.append(f"{seconds}s")
+    result = " ".join(parts)
     logger.debug(f"Parsed {seconds} seconds to {result}")
     return result
 
@@ -38,7 +48,9 @@ def parse_duration(duration_str):
     logger.debug(f"Parsed duration '{duration_str}' to {result} seconds")
     return result
 
-def parse_mentions(interaction: discord.Interaction, mentions : str):
+
+### Mentions Function
+def parse_mentions(interaction: discord.Interaction, mentions : str) -> List[int]:
     logger.info(f"Parsing mentions: {mentions}")
     logger.info(f"Interaction User: {interaction.user} and Interaction Guild: {interaction.guild}")
     members = []
@@ -58,76 +70,103 @@ def parse_mentions(interaction: discord.Interaction, mentions : str):
                 members.append(member)
                 logger.info(f"Added member with username: {member.name}")
         
-        members.append(interaction.user)
-    
-    return list(set(members))  # Remove duplicates
+    members.append(interaction.user)
+
+    member_ids = [member.id for member in members]
+    return list(set(member_ids))  # Remove duplicates
 
 
-def generate_custom_id(action : str, session_id: str, namespace: str) -> str:
+
+### Validation Functions
+async def validate_parameters(
+    interaction: discord.Interaction,
+    name: Optional[str] = None,
+    member_ids: Optional[str] = None,
+    category: Optional[discord.CategoryChannel] = None,
+    duration: Optional[str] = None,
+    min_duration: Optional[int] = None,
+    max_members: Optional[int] = None
+) -> Optional[bool]:
     """
-    Generate a custom ID with the module namespace, action, and session ID.
-    
-    :param action: The action to be included in the custom ID.
-    :param session_id: The session ID to be included in the custom ID.
-    :return: A custom ID string in the format "namespace~action~session_id".
-    """
-    return f"{namespace}~{action}~{session_id}"
-
-
-def parse_custom_id(interaction: discord.Interaction) -> tuple:
-    """
-    Parse a custom ID from a discord.Interaction into its namespace, action, and session ID components.
-    
-    :param interaction: The discord.Interaction object.
-    :return: A tuple of (namespace, action, session_id) if valid, otherwise raises an error.
-    :raises ValueError: If the custom ID format is invalid or not present.
-    """
-    # Log the entire interaction data for debugging
-    logger.debug(f"Parse_Custom_ID: Interaction Data: {interaction}")
-    
-
-    if interaction.data and "custom_id" in interaction.data:
-        custom_id = interaction.data["custom_id"]
-        
-        try:
-            namespace, action, session_id = custom_id.split('~')
-            
-            # Log the details of the parsed components
-            logger.info(f"Received custom_id: {custom_id}")
-            logger.info(f"Namespace: {namespace}, Action: {action}, Session ID: {session_id}")
-            
-            return namespace, action, session_id
-        
-        except ValueError as ve:
-            logger.error(f"Failed to parse custom_id: {custom_id} - Error: {ve}")
-            raise ValueError(f"Invalid custom_id format: {custom_id} - {ve}")
-    else:
-        logger.error("No custom_id found in interaction data.")
-        raise ValueError("No custom_id found in interaction data.")
-
-
-
-
-### Assign Roles
-
-async def assign_role_to_user(member: discord.Member, role: discord.Role):
-    """
-    Assigns a specified role to a member.
-
-    :param member: The discord.Member object representing the user.
-    :param role: The discord.Role object representing the role to be assigned.
+    A unified parameter validation function for all modules (Checkin, Study Group).
+    Parameters are optional, and validation will only be performed for those passed.
+    Parameters:
+    - name: Name - Study Group
+    - mentions: List of Member IDs - Checkin, Study Group
+    - category: Category of Study Group
+    Minimums and Maximum Values:
+    - min_duration: The minimum duration of Checkin reminder
+    - max_members: The maximum number of members - Checkin, Study Group
     """
     try:
-        await member.add_roles(role)
-        return f"Role {role.name} has been assigned to {member.display_name}."
-    except discord.Forbidden:
-        return "I do not have permission to assign this role."
-    except discord.HTTPException as e:
-        return f"Failed to assign role: {str(e)}"
+        # 1. Validate the group name if provided
+        if name is not None:
+            if not name or len(name) > 100:
+                await interaction.followup.send("Invalid group name. The name must be non-empty and less than 100 characters.", ephemeral=True)
+                logger.warning(f"Invalid group name provided: {name} by user {interaction.user}")
+                return False
+
+        # 2. Check if the max_members given is a positive number
+        if max_members < 0:
+            await interaction.followup.send("The maximum number of members must be non-negative.", ephemeral=True)
+            logger.warning(f"Invalid max_members provided: {max_members} by user {interaction.user}")
+            return False
+        
+        # 3. Validate member_ids if provided (fetching Members by IDs)
+        if member_ids is not None:
+            guild = interaction.guild
+            members = [guild.get_member(member_id) for member_id in member_ids]  # Fetch Members by IDs
+
+            if not all(members):
+                await interaction.followup.send("One or more members couldn't be found. Please mention valid users.", ephemeral=True)
+                logger.warning(f"Some members in the mentions couldn't be found. User {interaction.user} provided mentions: {member_ids}")
+                return False
+
+            if max_members is not None and len(members) > max_members:
+                await interaction.followup.send(f"Too many members specified. Max allowed: {max_members}.", ephemeral=True)
+                logger.warning(f"Too many members ({len(members)}) compared to max_members: {max_members}. User {interaction.user}")
+                return False
+
+        # 4. Validate category if provided
+        if category is not None:
+            if category not in interaction.guild.categories:
+                await interaction.followup.send("No valid category specified. Please provide a valid category.", ephemeral=True)
+                logger.warning(f"Invalid category provided: {category}. User {interaction.user}")
+                return False
+
+        # 5. Validate duration if provided (for check-in)
+        if duration is not None:
+            duration_seconds = parse_duration(duration)
+            if duration_seconds is None:
+                await interaction.followup.send("Wrong duration format used. Please provide a valid duration like '2d 14h 25m 30s'.", ephemeral=True)
+                logger.warning(f"Wrong duration format entered by user {interaction.user}: {duration}")
+                return False
+            if min_duration is not None and duration_seconds < min_duration:
+                await interaction.followup.send(f"Duration must be at least {parse_seconds_to_hms(min_duration)}.", ephemeral=True)
+                logger.warning(f"Attempted to start a session with insufficient duration by user {interaction.user}. Entered duration: {duration_seconds} (minimum: {min_duration} seconds).")
+                return False
+
+        return True
+
+    except discord.Forbidden as forbidden_e:
+        logger.error(f"Permission error during validation by user {interaction.user}: {forbidden_e}")
+        await interaction.followup.send(f"Permission error occurred during validation: {forbidden_e}", ephemeral=True)
+        return False
+
+    except discord.HTTPException as http_e:
+        logger.error(f"HTTP error during validation by user {interaction.user}: {http_e}")
+        await interaction.followup.send(f"HTTP error occurred during validation: {http_e}", ephemeral=True)
+        return False
+
     except Exception as e:
-        return f"An error occurred: {str(e)}"
+        logger.critical(f"Unexpected error during validation by user {interaction.user}: {e}")
+        await interaction.followup.send(f"An unexpected error occurred during validation: {e}", ephemeral=True)
+        return False
 
 
+
+
+### Membership and Manager Functions
 
 
 

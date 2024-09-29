@@ -2,246 +2,698 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import asyncio
-from utils import parse_seconds_to_hms, parse_mentions, generate_custom_id, parse_custom_id, assign_role_to_user
+from utils import parse_seconds_to_hms, parse_mentions, validate_parameters
 import logging
 import uuid
 from typing import List
 from datetime import datetime, timedelta
 import sys
+from database import DBHandler
+from discord.ui import View, Button, Select, Modal, TextInput
+import time
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 current_namespace = sys.modules[__name__].__name__.split('.')[-1]
 
 class StudyGroup:
-    def __init__(self, guild: discord.Guild, name: str, creator_id: int, category_id: int, max_size: int = 10):
+    def __init__(self, db, cog, guild_id: int, name: str, creator_id: int, category_id: int, max_members: int, member_ids: List[int] ):
         # Initializes the StudyGroup class.
-        self.guild : discord.Guild = guild                          # Store the guild object for future use
-        self.guild_id : int = guild.id                              # Guild ID for reference
-        self.group_id : str = self.generate_group_id()              # Unique Group ID using UUID v4
-        self.name : str = name                                      # Group name
-        self.category_id : int = category_id                        # Category ID for the group
-        self.max_size : int = max_size                              # Maximum number of members in the group
-        self.group_role_id: int = 0                                 # Role ID for the group's members
-        self.vc_id: int = 0                                         # Voice channel ID
-        self.text_id: int = 0                                       # Text channel ID
+        
+        # Critical Info first
+        self.guild_id : int = guild_id
+        self.name : str = name
+        self.group_id : str = self.generate_group_id()
         self.creator_id : int = creator_id
-        self.start_time : datetime = datetime.now()                 # Start time of Group
-        self.curernt_time : datetime = datetime.now()               # Sets the current time of the study group
-        self.duration = 12*60*60                                    # Default duration is 12 hours
-        self.active: bool = True                                    # Boolean to track if the group is active
+        self.owner_id : int = creator_id                            # Initially, creator is owner
+        self.category_id : int = category_id
+        self.max_members : int = max_members
+        self.member_ids : List[int] = member_ids
 
-        # Initialize the Membership management class
-        self.membership = self.Membership(self, creator_id, max_size)
-        # Initialize the MessageFunctions object
-        self.message_functions = self.MessageFunctions(self)
+        # IDs for roles and channels (will be set later)
+        self.group_role_id: int = 0
+        self.vc_id: int = 0
+        self.text_id: int = 0
+        self.info_embed_id = 0
 
+        # VC Settings
+        self.speak_enabled : bool = True
+        self.video_mode : str = "off"
+        self.video_timer : int = 10                                 # in seconds 
+        
+        # Time related attributes
+        self.start_time : datetime = datetime.now()
+        self.duration : int = 12*60*60                              # Default duration of 12 hours
+        self.end_time : datetime = self.start_time + timedelta(seconds=self.duration)
+        self.curernt_time : datetime = datetime.now()
+        
+        # Final Stuff
+        self.active : bool = False
+        
+        # Other stuff, not stored in Database
+        self.cog : 'StudyGroupCog' = cog
+        self.db : DBHandler = db
+        self.guild : discord.Guild = None
+        self.view : View = None
+
+
+
+
+    ## Setup - Generate Group ID    
     def generate_group_id(self) -> str:
         # Generate a unique UUID v4 for the group
         return str(uuid.uuid4())
     
+
+    ## Support - Convert timestamp to datetime
+    def from_timestamp_to_datetime(self):
+        self.start_time = datetime.fromtimestamp(self.start_time)
+        self.end_time = datetime.fromtimestamp(self.end_time)
+
+    ## Support - Convert datetime to timestamp
+    ## - It's handled by .timestamp feature, so it's not needed
     
-    @classmethod
-    async def create_group(cls, interaction: discord.Interaction, name: str, max_size: int, mentioned_members: List[discord.Member], category: discord.CategoryChannel):
-        ### Create a new study group and return the instance, handling errors with ephemeral messages
-        logger.info(f"Creating group '{name}' for creator {interaction.user.display_name} in guild {interaction.guild.name}")
+    ## Setup - Group Resources
+    async def setup_group_resources(self, interaction: discord.Interaction) -> str:
+        """
+        Sets up Discord resources (roles, channels, permissions) for the study group.
+        Sends welcome and group info messages, then writes to the database.
+        Returns a string indicating success or failure.
+        """
+        self.guild = interaction.guild
+        logger.info(f"Starting resource setup for StudyGroup '{self.name}' in guild '{self.guild_id}'")
 
-        # Create the group role
+        # 1. Role and channel creation
         try:
-            group_role = await interaction.guild.create_role(name=f"{name} Group", reason="Role for study group")
-            logger.info(f"Role '{group_role.name}' created for group '{name}'")
-        except Exception as e:
-            logger.error(f"Error creating role for group '{name}': {e}")
-            await interaction.followup.send(f"Error creating role for the group: {e}", ephemeral=True)
-            return None
+            # Create group role
+            group_role = await self.guild.create_role(name=f"{self.name} Group", reason="Role for study group")
+            self.group_role_id = group_role.id
+            logger.info(f"Role '{group_role.name}' created for StudyGroup '{self.name}'")
 
-        # Create the text and voice channels under the specified category
-        try:
-            text_channel = await category.create_text_channel(name=f"{name}-text", reason="Text channel for study group")
-            voice_channel = await category.create_voice_channel(name=f"{name}-voice", reason="Voice channel for study group")
-            logger.info(f"Channels created for group '{name}': text - {text_channel.name}, voice - {voice_channel.name}")
-        except Exception as e:
-            logger.error(f"Error creating channels for group '{name}': {e}")
-            await interaction.followup.send(f"Error creating channels for the group: {e}", ephemeral=True)
-            return None
+            # Create channels in the specified category
+            category = self.guild.get_channel(self.category_id)
+            if not category or not isinstance(category, discord.CategoryChannel):
+                logger.error(f"Category not found with ID {self.category_id} in {self.guild_id}")
+                raise ValueError(f"Invalid category: {self.category_id} for StudyGroup '{self.name}'")
+                
+   
 
-        # Assign Users to roles
-        try:
-            for member in mentioned_members:
-                await assign_role_to_user(member, group_role)
-                logger.info(f"User '{member.display_name}' assigned to role '{group_role.name}' for group '{name}'")
-            logger.info(f"Users assigned to role '{group_role.name}' for group '{name}'")
+            text_channel = await category.create_text_channel(name=f"{self.name}-text", reason="Text channel for study group")
+            voice_channel = await category.create_voice_channel(name=f"{self.name}-voice", reason="Voice channel for study group")
+            self.text_id = text_channel.id
+            self.vc_id = voice_channel.id
+            logger.info(f"Text and voice channels created for StudyGroup '{self.name}': Text ID: {self.text_id}, Voice ID: {self.vc_id}")
+
+            # Set permissions for group role in channels
+            await text_channel.set_permissions(self.guild.get_role(self.group_role_id), read_messages=True, send_messages=True)
+            await voice_channel.set_permissions(self.guild.get_role(self.group_role_id), connect=True, speak=True)
+
+        except discord.Forbidden as forbidden_e:
+            logger.error(f"Permission error during role/channel setup: {forbidden_e}")
+            return f"Failed to set up resources for '{self.name}': Permission error."
+
+        except discord.HTTPException as http_e:
+            logger.error(f"HTTP error during role/channel setup: {http_e}")
+            return f"Failed to set up resources for '{self.name}': HTTP error."
+
         except Exception as e:
-            logger.error(f"Error assigning users to role '{group_role.name}' for group '{name}': {e}")
-            await interaction.followup.send(f"Error assigning users to role: {e}", ephemeral=True)
+            logger.error(f"Error creating role/channels for StudyGroup '{self.name}': {e}")
+            return f"Failed to create role/channels for '{self.name}'."
+
+        # 2. Member role assignment
+        try:
+            for member_id in self.member_ids:
+                member = self.guild.get_member(member_id)
+                if member:
+                    await member.add_roles(self.guild.get_role(self.group_role_id))
+                    logger.info(f"Assigned role to member '{member.display_name}' for StudyGroup '{self.name}'")
+                else:
+                    logger.warning(f"Member with ID '{member_id}' not found in guild '{self.guild_id}'")
+        except Exception as e:
+            logger.error(f"Error assigning roles to members for StudyGroup '{self.name}': {e}")
+            return f"Failed to assign roles to members for '{self.name}'."
+
+        # 3. Sending messages
+        try:
+            await self.send_welcome_message()
+            await self.group_info_embed()
+            await self.button_view()
+            await self.send_ping_message()
+            logger.info(f"Messages sent for StudyGroup '{self.name}'")
+        except Exception as e:
+            logger.error(f"Error sending messages for StudyGroup '{self.name}': {e}")
+            return f"Failed to send messages for StudyGroup '{self.name}': {e}"
+
+        self.active = True
+        logger.info(f"Study Group {self.name} is now active.")
+        
+        # 5. Saving to the database
+        try:
+            await self.db.save_study_group(study_group_data={
+                "guild_id": self.guild_id,
+                "name": self.name,
+                "group_id": self.group_id,
+                "category_id": self.category_id,
+                "max_members": self.max_members,
+                "member_ids": self.member_ids,
+                "creator_id": self.creator_id,
+                "owner_id": self.owner_id,
+                "group_role_id": self.group_role_id,
+                "text_id": self.text_id,
+                "vc_id": self.vc_id,
+                "info_embed_id": self.info_embed_id,
+                "start_time": self.start_time,
+                "duration": self.duration,
+                "end_time": self.end_time,
+                "speak_enabled": self.speak_enabled,
+                "video_mode": self.video_mode,
+                "video_timer": self.video_timer,
+                "active": self.active
+            }) 
+            logger.info(f"StudyGroup '{self.name}' saved to the database.")
+        except Exception as e:
+            self.active = False
+            asyncio.create_task(self.end_group())
+            logger.error(f"Failed to save StudyGroup '{self.name}' to the database: {e}")
+            return f"Failed to save StudyGroup '{self.name}' to the database."
+
+        # Log if all goes well
+        logger.info(f"StudyGroup '{self.name}'created successfully with roles, channels, and database entry.")
+        return f"StudyGroup '{self.name}' created successfully with roles, channels, and database entry."
+
+
+
+    ### --- MEMBERSHIP FUNCTIONS --- ###
+    """
+    Functions to manager membership:
+    Functions
+     - is_owner - returns bool
+     - is_member - returns bool
+     - add_member - returns None (also updates DB)
+        DB Function - add_member_to_db
+     - remove_member - returns None (also updates DB)
+        DB Function - remove_member_from_db
+     - transfer_ownership - returns None (also updates DB)
+        DB Function - transfer_ownership_db
+    """
+    
+    ## Membership - Check Owner
+    def is_owner(self, user_id: int) -> bool:
+        ### Check if the given user is the owner of the group
+        return self.owner_id == user_id
+
+
+    ## Membership - Check if member
+    def is_member(self, user_id : int) -> bool:
+        ### Check if the given user is a member of the group
+        return user_id in self.member_ids
+
+
+    ## Membership - Add Member to Group
+    async def add_member(self, interaction: discord.Interaction, user_id: int) -> None:
+        ### Add a member to the group
+        try:
+            if len(self.member_ids) >= self.max_members:
+                logger.warning(f"Group is full with No. of Members: {len(self.member_ids)} and Max members: {self.max_members}.")
+                await interaction.followup.send(f"This group is full with No. of Members: {len(self.member_ids)}", ephemeral=True)
+                return
+
+            if user_id in self.member_ids:
+                logger.warning(f"Member with ID {user_id} already in the group.")
+                await interaction.followup.send(f"Member with ID {user_id} already in the group.", ephemeral=True)
+                return
+
+            member : discord.Member = self.get_member(user_id)
+            if not member:
+                logger.warning(f"Member with ID {user_id} not found in the guild.")
+                await interaction.followup.send(f"Member with ID {user_id} not found.", ephemeral=True)
+                return
+            
+            group_role : discord.Role = self.guild.get_role(self.group_role_id)
+            # Retrieve the member and add the group role
+            await member.add_roles(group_role)
+            self.member_ids.append(user_id)
+            
+            # Update the database after adding the member
+            await self.db.add_member_to_study_group_db(self.group_id, user_id)
+
+            logger.info(f"Member {member.display_name} added to the group {self.name}.")
+            await interaction.followup.send(f"Member {member.display_name} added to the group.", ephemeral=True)
+            return
+
+        except Exception as e:
+            logger.error(f"Error adding member {member.id}: {e}")
+            await interaction.followup.send(f"Error adding member {user_id} to group {self.name}.", ephemeral=True)
+            return 
+
+
+    ## Membership - Remove Member from Group
+    async def remove_member(self, interaction: discord.Interaction, user_id : int) -> None:
+        ### Remove a member from group
+        try:
+            if len(self.member_ids) < 0:
+                logger.warning(f"There are no members ({len(self.member_ids)}) in the group: {self.name}.")
+                await interaction.followup.send(f"There are no members in this group. No. of Members: {len(self.member_ids)}.", ephemeral=True)
+                return
+            
+            if user_id not in self.member_ids:
+                logger.warning(f"Member with ID {user_id} is not part of the group: {self.name}.")
+                await interaction.followup.send(f"Member with ID {user_id} is not part of the group.", ephemeral=True)
+                return 
+
+            member = self.guild.get_member(user_id)
+            if not member:
+                logger.warning(f"Member with ID {user_id} not found in the guild {self.name}.")
+                await interaction.followup.send(f"Member with ID {user_id} not found.", ephemeral=True)
+                return 
+            
+            # Remove the group role from the member
+            group_role = self.guild.get_role(self.group_role_id)
+            await member.remove_roles(group_role)
+            self.member_ids.remove(user_id)
+            
+            # Update the database after removing the member
+            await self.db.remove_member_from_study_group_db(self.group_id, user_id)
+            
+            logger.info(f"Member {member.display_name} removed from the study group '{self.name}'.")
+            await interaction.followup.send(f"Member {member.display_name} successfully removed from the group.", ephemeral=True)
+            return
+
+        except Exception as e:
+            logger.error(f"Error removing member {user_id} from group '{self.name}': {e}")
+            await interaction.followup.send(f"Error removing member {user_id} from the group.", ephemeral=True)
             return
 
 
-        # Sync permissions for the group role
+    ## Membership - Transfer Ownership
+    async def transfer_ownership(self, interaction : discord.Interaction, new_owner_id : int) -> None:
+        ### Transfer ownership of the group to another member
         try:
-            await text_channel.set_permissions(group_role, read_messages=True, send_messages=True)
-            await voice_channel.set_permissions(group_role, connect=True, speak=True)
-            logger.info(f"Permissions set for role '{group_role.name}' in the text and voice channels.")
+            # Check - user who did the interaction is current owner
+            if interaction.user.id != self.owner_id:
+                logger.warning(f"User {interaction.user.display_name} is not the owner of the group '{self.name}'.")
+                await interaction.followup.send("You're not the owner of the group.", ephemeral=True)
+                return
+            # Check - if new owner is the current owner
+            if new_owner_id == self.owner_id:
+                logger.warning(f"User {interaction.user.display_name} is already the owner of the group '{self.name}'.")
+                await interaction.followup.send("You're already the owner of the group.", ephemeral=True)
+                return
+            
+            new_owner : discord.Member = interaction.guild.get_member(new_owner_id)
+            # Check - if new owner is in the guild
+            if not new_owner:
+                logger.warning(f"Member with ID {new_owner_id} not found in the guild.")
+                await interaction.followup.send(f"Member with ID {new_owner_id} not found.", ephemeral=True)
+                return
+
+            # Check - if new owner is part of the study group
+            if new_owner_id not in self.member_ids:
+                logger.warning(f"Member with ID {new_owner_id} and usern is not part of the group '{self.name}'.")
+                await interaction.followup.send(f"Member with ID {new_owner_id} is not part of the group.", ephemeral=True)
+                return
+
+            # Transfer ownership
+            await interaction.followup.send(content=f"Ownership transferred to from {interaction.user.mention} to {new_owner.mention}.")
+            self.owner_id = new_owner_id
+            
+            # Update the database after transferring ownership
+            await self.db.transfer_ownership_study_group_db(self.group_id, new_owner_id)
+            await self.group_info_embed(update=True)
+
+            logger.info(f"Ownership of group {self.study_group.name} transferred to from {interaction.user.display_name} to {new_owner.display_name}.", ephemeral=True)
+            return
+            
         except Exception as e:
-            logger.error(f"Error setting permissions for group '{name}': {e}")
-            await interaction.followup.send(f"Error setting permissions: {e}", ephemeral=True)
-            return None
-
-        # Initialize the StudyGroup object
-        study_group = cls(
-            guild=interaction.guild, 
-            name=name, 
-            creator_id=interaction.user.id, 
-            category_id=category.id,
-            max_size=max_size
-        )
-
-        # Assign the role, text, and voice channels to the group
-        study_group.group_role_id = group_role.id
-        study_group.text_id = text_channel.id
-        study_group.vc_id = voice_channel.id
+            logger.error(f"Error transferring ownership: {e}")
 
 
-        # Send a welcome message, group info embed, and button view in the text channel
-        try:
-            # Send the welcome message
-            await study_group.message_functions.send_welcome_message()
-            logger.info(f"Welcome message sent for group '{study_group.name}' in channel {study_group.text_id}.")
-
-            # Send the group info embed
-            await study_group.message_functions.group_info_embed()
-            logger.info(f"Group info embed sent for group '{study_group.name}' in channel {study_group.text_id}.")
-
-            # Send the button view message
-            await study_group.message_functions.button_view()
-            logger.info(f"Button view sent for group '{study_group.name}' in channel {study_group.text_id}.")
-
-        except discord.HTTPException as http_e:
-            logger.error(f"HTTP error while sending messages in group '{study_group.name}' for channel {study_group.text_id}: {http_e}")
-            await interaction.followup.send(f"An HTTP error occurred while sending messages: {http_e}", ephemeral=True)
-
-        except discord.Forbidden as forbidden_e:
-            logger.error(f"Permission error while sending messages in group '{study_group.name}' for channel {study_group.text_id}: {forbidden_e}")
-            await interaction.followup.send(f"Permission error occurred while sending messages: {forbidden_e}", ephemeral=True)
-
-        except Exception as e:
-            logger.error(f"Unexpected error sending messages in group '{study_group.name}' for channel {study_group.text_id}: {e}")
-            await interaction.followup.send(f"An unexpected error occurred while sending welcome or interaction messages: {e}", ephemeral=True)
-
-        return study_group
     
 
+    ### --- MESSAGE FUNCTIONS --- ###
+    """
+    List of functions for sending messages to the group
+    Functions:
+     - send_welcome_message
+     - disable_buttons
+     - group_info_embed
+     - button_view
+     - send_ping_message
+    """
     
-    class Membership:
-        def __init__(self, study_group: 'StudyGroup', creator_id: int, max_size: int):
-            self.study_group = study_group                          # Reference to the parent StudyGroup class
-            self.owner_id: int = creator_id                         # Group owner ID
-            self.members: List[int] = []                            # List of member IDs
-            self.max_size: int = max_size                           # Maximum number of members
+    ## Message - Send Group Buttons in VIEW
+    async def button_view(self) -> None:
+        ### Create the view of buttons that people can interact with
+        try:
+            text_channel: discord.TextChannel = self.guild.get_channel(self.text_id)
+
+            if not text_channel:
+                logger.error(f"Text channel with ID {self.text_id} not found for group '{self.name}'.")
+                return
+            
+            # Create Buttons
+            leave_button = Button(label="Leave Group", style=discord.ButtonStyle.danger)
+            end_button = Button(label="End Group", style=discord.ButtonStyle.danger)
+            votekick_button = Button(label="Votekick", style=discord.ButtonStyle.secondary)
+            speak_toggle_button = Button(label="Speak On/Off", style=discord.ButtonStyle.secondary)
+            video_toggle_button = Button(label="Video On/Off", style=discord.ButtonStyle.secondary)
+            extend_button = Button(label="Extend Duration", style=discord.ButtonStyle.secondary)
+            rename_button = Button(label="Rename Group", style=discord.ButtonStyle.success)
 
 
-        def is_owner(self, user: discord.Member) -> bool:
-            ### Check if the given user is the owner of the group
-            return self.owner_id == user.id
+            # Assign Callbacks
+            leave_button.callback = self.leave_group_callback
+            end_button.callback = self.end_group_callback
+            votekick_button.callback = self.votekick_callback
+            speak_toggle_button.callback = self.speak_toggle_callback
+            video_toggle_button.callback = self.video_toggle_callback
+            extend_button.callback = self.extend_duration_callback
+            rename_button.callback = self.rename_group_callback
+
+            # Add Select Menu after this
+            
+            # Create View and add all components
+            self.view = View()
+            self.view.add_item(leave_button)
+            self.view.add_item(end_button)
+            self.view.add_item(votekick_button)
+            self.view.add_item(speak_toggle_button)
+            self.view.add_item(video_toggle_button)
+            self.view.add_item(extend_button)
+            self.view.add_item(rename_button)
+    
+            # self.view.add_item(select)
+            
+            # Send the message with the button view
+            await text_channel.send(content="Here are your group control buttons:", view=self.view)
+            logger.info(f"Button view sent in channel '{text_channel.name}' for group '{self.name}'.")
+        
+        except Exception as e:
+            logger.error(f"Error sending button view in channel '{text_channel.name}' for group '{self.name}': {e}")
+    
+
+    ## Message - Send Welcome Message in MESSAGE
+    async def send_welcome_message(self):
+        try:
+            # Retrieve the group role object
+            role : discord.Role = self.guild.get_role(self.group_role_id)
+            send_channel : discord.TextChannel = self.guild.get_channel(self.text_id)
+
+            # Compose the welcome message
+            welcome_message = (
+                f"🎉 Welcome to the **{self.name}** study group!\n"
+                f"{role.mention}, you've been added to the group. Let's get studying together! 📚"
+            )
+
+            # Send the message in the specified text channel
+            await send_channel.send(welcome_message)
+            logger.info(f"Welcome message sent in channel '{send_channel.name}' for group '{self.name}'.")
+        
+        except Exception as e:
+            logger.error(f"Error sending welcome message in channel {send_channel.name} for group '{self.name}': {e}")
+
+    
+    ## Message - Disable buttons of a given message
+    async def disable_buttons(self, message: discord.Message) -> None:
+        ### Disable all buttons in the given message
+        try: 
+            view = discord.ui.View()
+            for item in message.components:
+                item.disabled = True
+            await message.edit(view=view)
+            logger.info(f"Buttons disabled in message '{message.content}' in the channel '{message.channel.name}' for group '{self.name}'.")
+
+        except Exception as e:
+            logger.error(f"Error disabling buttons in message '{message.content}' in channel '{message.channel.name}' for group '{self.name}': {e}")
 
 
-        def is_member(self, user : discord.Member) -> bool:
-            ### Check if the given user is a member of the group
-            return user.id in self.members
+    ## Message - Send Group Info in EMBED
+    async def group_info_embed(self, update : bool = False) -> None:
+        try:
+            text_channel: discord.TextChannel = self.guild.get_channel(self.text_id)
+            voice_channel: discord.VoiceChannel = self.guild.get_channel(self.vc_id)
+            role: discord.Role = self.guild.get_role(self.group_role_id)
+            creator: discord.User = self.guild.get_member(self.creator_id)
+            owner: discord.User = self.guild.get_member(self.owner_id)
+
+            # Create the embed
+            embed = discord.Embed(title=self.name)
+            embed.description = f"This group is for studying, and people are going to study hard in this!!!"
+            embed.add_field(name = "Text Channel", value = text_channel.mention)
+            embed.add_field(name = "Voice Channel", value = voice_channel.mention)
+            embed.add_field(name = "Creator", value = creator.mention, inline=True)
+            embed.add_field(name = "Owner", value = owner.mention, inline=True)
+            embed.add_field(name = "Group Role", value = role.mention)
+            embed.add_field(name = "Number of Members", value = len(self.member_ids), inline=True)
+            embed.add_field(name = "Max Size", value = self.max_members, inline=True)
+            embed.add_field(name = "Group Duration", value = parse_seconds_to_hms(self.duration), inline=True)
+            embed.add_field(name="Video", value=f"Video Mode: {self.video_mode.capitalize()}", inline=True)
+            embed.add_field(name="Video Timer", value=f"{self.video_timer} seconds", inline=True)
+            embed.add_field(name="Speak", value="On" if self.speak_enabled else "Off", inline=True)
+
+             # If updating an existing message
+            if update and self.info_embed_id:
+                try:
+                    # Fetch the message by ID and edit it
+                    message = await text_channel.fetch_message(self.info_embed_id)
+                    await message.edit(embed=embed)
+                    logger.info(f"Group info embed updated in channel '{text_channel.name}' for group '{self.name}'.")
+                except discord.NotFound:
+                    logger.warning(f"Message with ID {self.info_embed_id} not found, sending a new message.")
+                    # If the message was deleted, send a new one
+                    new_message = await text_channel.send(embed=embed)
+                    self.info_embed_id = new_message.id
+                    logger.info(f"Group info embed sent in channel '{text_channel.name}' for group '{self.name}' (new message).")
+            
+            else:
+                # Send a new message and store its message ID
+                new_message = await text_channel.send(embed=embed)
+                self.info_embed_id = new_message.id
+                logger.info(f"Group info embed sent in channel '{text_channel.name}' for group '{self.name}' (first message).")
+
+        
+        except Exception as e:
+            logger.error(f"Error sending group info embed in channel '{text_channel.name}' for group '{self.name}': {e}")
 
 
-        async def add_member(self, member: discord.Member) -> None:
-            ### Add a member to the group
-            try:
-                if len(self.members) < self.max_size:
-                    # Retrieve the member and add the group role
-                    await member.add_roles(discord.Object(id=self.study_group.group_role_id))
-                    logger.info(f"Member {member.display_name} added to the group {self.study_group.name}.")
-                    self.members.append(member.id)
-                else:
-                    raise Exception(f"Group is full with No. of Members: {len(self.members)} and Max members: {self.max_size}.")
-            except Exception as e:
-                logger.error(f"Error adding member {member.id}: {e}")
+    ## Message - Send Ping Message in MESSAGE
+    async def send_ping_message(self, send_channel: discord.TextChannel = None) -> None:
+
+        if send_channel is None:
+            send_channel = self.guild.get_channel(self.text_id)
+
+        role : discord.Role = self.guild.get_role(self.group_role_id)
+        members : List[discord.Member] = []
+
+        for member_id in self.member_ids:
+            member : discord.Member = self.guild.get_member(member_id)
+            members.append(member)
+
+        message = ", ".join([member.mention for member in members])
+        await send_channel.send(content=f"Hello group! {role.mention}")
+        await send_channel.send(content=f"Hello All Members! \n {message}")
 
 
-        async def remove_member(self, member : discord.Member) -> None:
-            ### Remove a member from group
-            try:
-                if member.id in self.members:
-                    if member:
-                        await member.remove_roles(discord.Object(id=self.study_group.group_role_id))  # Remove group role
-                        self.members.append(member.id)
-                        logger.info(f"Member {member.display_name} removed from the group {self.study_group.name}.")
-                    else:
-                        logger.warning(f"Member with ID {member.id} not found in the guild.")
-                else:
-                    raise Exception("Member not found in the group")
-            except Exception as e:
-                logger.error(f"Error removing member {member.id}: {e}")
+
+    ### --- CALLBACK FUNCTIONS --- ###
+    """
+    These are the callback functions for Button and Select Menu Interactions
+     - Invite Members - Select Menu
+     - Kick Members - Select Menu
+     - Leave Group - Button
+        - Placeholder Set up
+     - End Group - Button
+         - Implemented
+     - Rename Group - Button
+         - Implemented
+     - Extend Duration - Button
+         - Implemented
+     - Votekick - Button 
+         - Placeholder Set up
+     - Speak on/off - Button
+         - Placeholder Set up
+     - Video on/off/force - Button
+         - Placeholder Set up
+    """
+        
+    ## Callback - End Group
+    async def end_group_callback(self, interaction: discord.Interaction):
+        
+        role : discord.Role = self.guild.get_role(self.group_role_id)
+
+        await interaction.response.send_message(f"❗❗Attention❗❗\n{role.mention}\nThe group will be destroyed in 60 seconds.\nPlease disconnect from the VCs and wrap up your activities.")
+        asyncio.create_task(self.end_group())
+        await interaction.followup.send("End Group function has started. The group will end shortly.")
+        logger.info(f"User: {interaction.user.name} has called for the closure of Group'{self.name}', End Group function has started. The group will end shortly.")
 
 
-        async def transfer_ownership(self, interaction, new_owner: discord.Member) -> None:
-            ### Transfer ownership of the group to another member
-            try:
-                # Check if the user who did the interaction is the current owner
-                if interaction.user.id != self.owner_id:
-                    await interaction.followup.send("You're not the owner of the group.", ephemeral=True)
-                    return
+    ## Callback - Rename Group
+    async def rename_group_callback(self, interaction: discord.Interaction):
+    # Define the modal subclass inside the callback (local to this scope)
+        class RenameGroupModal(Modal):
+            def __init__(self, study_group, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.study_group : 'StudyGroup'= study_group
+
+                # Add a text input field for the new group name
+                self.new_name_input = TextInput(
+                    label="New Group Name",
+                    placeholder="Enter the new group name",
+                    required=True,
+                    max_length=100
+                )
+                self.add_item(self.new_name_input)
+
+            # Define the submission logic
+            async def on_submit(self, interaction: discord.Interaction):
+                new_name = self.new_name_input.value
                 
-                if new_owner.id in self.members:
-                    await interaction.followup.send(content=f"Ownership transferred to from {self.study_group.guild.get_member(self.owner_id).mention} to {new_owner.mention}.")
-                    self.owner_id = new_owner.id
-                    logger.info(f"Ownership of group {self.study_group.name} transferred to {new_owner.display_name}.")
-                else:
-                    await interaction.followup.send("New owner must be a member of the group.", ephemeral=True)
-            except Exception as e:
-                logger.error(f"Error transferring ownership: {e}")
+                try:
+                    # Defer the interaction to avoid timeout
+                    await interaction.response.defer(ephemeral=True)
+                    
+                    # Update the group's name
+                    self.study_group.name = new_name
+                    
+                    # Rename Role, VC, Text Channel
+                    role : discord.Role = interaction.guild.get_role(self.study_group.group_role_id)
+                    if role:
+                        await role.edit(name=f"{new_name} Group")
+                        logger.info(f"Role '{old_name} Group' renamed to '{new_name} Group'")
+                    
+                    text_channel : discord.TextChannel = interaction.guild.get_channel(self.study_group.text_id)
+                    if text_channel:
+                        await text_channel.edit(name=f"{new_name}-text")
+                        logger.info(f"Text Channel '{old_name}-text' renamed to '{new_name}-text'")
+                    
+                    voice_channel : discord.VoiceChannel = interaction.guild.get_channel(self.study_group.vc_id)
+                    if voice_channel:
+                        await voice_channel.edit(name=f"{new_name}-voice")
+                        logger.info(f"Voice Channel '{old_name}-voice' renamed to '{new_name}-voice'")
+                    
+                    # Update into database
+                    await self.study_group.db.update_study_group_by_id({
+                        "group_id": self.study_group.group_id,
+                        "name": new_name
+                    })
+                    
+                    # Update Group Info Embed
+                    await self.study_group.group_info_embed(update=True)
 
+                    # Send a follow-up confirmation message
+                    await interaction.followup.send(f"Group renamed to '{new_name}'", ephemeral=True)
+                    logger.info(f"The group renamed from {self.study_group.name} to {new_name}")
+                
+                except Exception as e:
+                    logger.error(f"Error renaming group '{self.study_group.name}': {e}")
+                    await interaction.followup.send(f"Error renaming group", ephemeral=True)
 
-    
-    def clear_group_data(self, study_group: 'StudyGroup'):
-        """Clear all data associated with the study group."""
         try:
-            study_group.membership.members.clear()  # Clear member list
-            study_group.group_role_id = None
-            study_group.text_id = None
-            study_group.vc_id = None
-            study_group.active = False
-            logger.info(f"Group data cleared for group '{study_group.name}'.")
+            old_name = self.name
+            # Create an instance of the modal
+            rename_group_modal = RenameGroupModal(self, title=f"Rename Study Group: {old_name}")
+            
+            # Show the modal to the user
+            await interaction.response.send_modal(rename_group_modal)
+
         except Exception as e:
-            logger.error(f"Error clearing data for group '{study_group.name}': {e}")
+            logger.error(f"Error renaming group '{self.name}': {e}")
+            await interaction.followup.send(f"Error renaming group", ephemeral=True)
 
 
+    ## Callback - Extend Duration
+    async def extend_duration_callback(self, interaction: discord.Interaction):
+        try:
+            extra_time : int = 3600  # Example: Extend by 1 hour
+            self.duration += extra_time
+            self.end_time : datetime = self.end_time + timedelta(seconds=extra_time)
+            # Update in the database (DBHandler function)
+            await self.db.update_study_group_by_id({
+                "group_id": self.group_id,
+                "duration": self.duration,
+                "end_time": self.end_time
+            })
+            
+            await self.group_info_embed(update=True)
+            await interaction.response.send_message(f"Duration extended by 1 hour. New end time: {self.end_time}", ephemeral=True)
+            logger.info(f"Duration extended by 1 hour. New end time: {self.end_time}. Database updated.")
+        except Exception as e:
+            logger.error(f"Error extending duration: {e}")
+
+
+    ## Callback (Not Implemented)- Speak on/off
+    async def speak_toggle_callback(self, interaction: discord.Interaction):
+        await interaction.response.send_message("Speak Toggle feature will be implemented later.", ephemeral=True)
+
+
+    ## Callback (Not Implemented)- Video on/off/force
+    async def video_toggle_callback(self, interaction: discord.Interaction):
+        await interaction.response.send_message("Video Toggle feature will be implemented later.", ephemeral=True)
+    
+
+    ## Callback (Not Implemented)- Votekick
+    async def votekick_callback(self, interaction: discord.Interaction):
+        await interaction.response.send_message("This feature will be implemented later.", ephemeral=True)
+    
+
+    ## Callback (Not Implemented)- Leave Group
+    async def leave_group_callback(self, interaction: discord.Interaction):
+        await interaction.response.send_message(f"This feature hasn't been added yet for '{self.name}'.", ephemeral=True)
+        # Placeholder for actual logic to remove the user from the group
+        # Example: await self.remove_member(interaction.user.id)
+
+
+
+
+    ### --- END FUNCTIONS --- ###
+    """
+    Flow of Logic - 
+    End Group function is called in the following situtations:
+        1. Check End Condition
+            - Check if the group is active
+            - Check if the group's duration has elapsed
+            - Check if there are no members left
+        2. User Presses End Button
+            - end_group_callback function is called
+    End Group Function is activated
+    - It has a delay of 60 seconds
+    - Then it does the following:
+        - Text Channel Deletion / Permission Revoking
+        - Delete Voice Channel
+        - De-assign role from all members
+        - Delete role
+        - Clear group_data in memory (using clear_group_data function)
+    """
+
+
+    ## End - Check End Condition
     async def check_end_condition(self):
         """Periodically checks the end conditions for a study group and triggers the end when conditions are met."""
         try:
-            end_time = self.start_time + timedelta(seconds=self.duration)
-
             logger.info(f"Started end condition check for group '{self.name}' with a duration of {parse_seconds_to_hms(self.duration)}.")
 
             # Continuously check the conditions
             while True:
+                current_time = datetime.now()
+                
                 # 1. Check if the group is marked inactive (active = False)
                 if not self.active:
                     logger.info(f"Group '{self.name}' is being ended by the owner or due to manual condition.")
-                    await self.end_group(self.group_id, delete_text_channel=False)  # or True, based on your choice
+                    await self.end_group(delete_text_channel=False)
                     return
 
                 # 2. Check if there are no members left in the group
-                '''
-                if len(self.membership.members) == 0:
+                if len(self.member_ids) == 0:
                     logger.warning(f"Group '{self.name}' has no members left and is being ended.")
                     self.active = False  # Mark as inactive
-                    await self.end_group(self.group_id, delete_text_channel=False)
+                    await self.end_group(delete_text_channel=False)
                     return
-                '''
 
                 # 3. Check if the group's duration has elapsed
-                current_time = datetime.now()
-                if current_time >= end_time:
-                    logger.info(f"Group '{self.name}' duration of 12 hours has elapsed. Ending the group.")
+                if current_time >= self.end_time:
+                    logger.info(f"Group '{self.name}' duration of {parse_seconds_to_hms(self.duration)} has elapsed. Ending the group.")
                     self.active = False  # Mark as inactive
-                    await self.end_group(self.group_id, delete_text_channel=True)
+                    await self.end_group(delete_text_channel=False)
                     return
 
                 # Wait for 1 minute before checking the conditions again
@@ -252,35 +704,32 @@ class StudyGroup:
         except Exception as e:
             logger.error(f"Error in checking end conditions for group '{self.name}': {e}")
 
-
  
-    async def end_group(self, group_id: str, delete_text_channel: bool = False):
+    ## End - End Group Function
+    async def end_group(self, delete_text_channel: bool = True):
         """End the study group by clearing data, deleting channels, removing roles, and clearing permissions."""
-        
         try:
-            # Fetch the study group from the dictionary using the group_id
-            study_group : StudyGroup = self.study_groups.get(group_id)
-
-            if not study_group:
-                logger.warning(f"Group with ID {group_id} not found.")
-                return
-
-            guild = study_group.guild
-            role_id = study_group.group_role_id
-            text_channel_id = study_group.text_id
-            voice_channel_id = study_group.vc_id
-
             # Fetch the role, text channel, and voice channel by their IDs
-            role : discord.Role = guild.get_role(role_id)
-            text_channel : discord.TextChannel = guild.get_channel(text_channel_id)
-            voice_channel : discord.VoiceChannel = guild.get_channel(voice_channel_id)
+            role : discord.Role = self.guild.get_role(self.group_role_id)
+            text_channel : discord.TextChannel = self.guild.get_channel(self.text_id)
+            voice_channel : discord.VoiceChannel = self.guild.get_channel(self.vc_id)
+
+            # Calculate end timestamp
+            end_timestamp = int((datetime.now() + timedelta(seconds=60)).timestamp())
+            countdown_text = f"<t:{end_timestamp}:R>"
+
+            await text_channel.send(content=f"Hey people of {role.mention}\nThe End Function will start in 60 seconds.")
+            logger.info(f"The End condition has been triggered. from this namespae: {__name__}")
+            await text_channel.send(content=countdown_text)
+
+            await asyncio.sleep(60)
 
             # 1. Handle text channel deletion or permission revoking
             if text_channel:
                 if delete_text_channel:
                     try:
                         await text_channel.delete(reason="Study group ended, deleting text channel.")
-                        logger.info(f"Text channel '{text_channel.name}' deleted for group '{study_group.name}'.")
+                        logger.info(f"Text channel '{text_channel.name}' deleted for group '{self.name}'.")
                     except Exception as e:
                         logger.error(f"Error deleting text channel '{text_channel.name}': {e}")
                 else:
@@ -295,44 +744,79 @@ class StudyGroup:
             if voice_channel:
                 try:
                     await voice_channel.delete(reason="Study group ended, deleting voice channel.")
-                    logger.info(f"Voice channel '{voice_channel.name}' deleted for group '{study_group.name}'.")
+                    logger.info(f"Voice channel '{voice_channel.name}' deleted for group '{self.name}'.")
                 except Exception as e:
-                    logger.error(f"Error deleting voice channel '{voice_channel.name}': {e}")
+                    logger.error(f"Error deleting voice channel '{voice_channel.name} from {self.name}': {e}")
 
             # 3. De-assign the role from all members
             if role:
                 try:
-                    for member in guild.members:
+                    for member in self.guild.members:
                         if role in member.roles:
                             await member.remove_roles(role, reason="Study group ended, removing group role.")
-                    logger.info(f"Role '{role.name}' removed from all members of group '{study_group.name}'.")
+                    logger.info(f"Role '{role.name}' removed from all members of group '{self.name}'.")
                 except Exception as e:
                     logger.error(f"Error de-assigning role '{role.name}' from members: {e}")
 
                 # 4. Delete the role
                 try:
                     await role.delete(reason="Study group ended, deleting group role.")
-                    logger.info(f"Role '{role.name}' deleted for group '{study_group.name}'.")
+                    logger.info(f"Role '{role.name}' deleted for group '{self.name}'.")
                 except Exception as e:
                     logger.error(f"Error deleting role '{role.name}': {e}")
 
             # 5. Clear group data
-            self.clear_group_data(study_group)
-            logger.info(f"Data cleared for group '{study_group.name}'.")
-
-            # 6. Remove the group from the dictionary
-            del self.study_groups[group_id]
-            logger.info(f"Group '{study_group.name}' with ID {group_id} successfully ended and removed.")
+            self.clear_group_data()
+            logger.info(f"Data cleared for group '{self.name}'.")
 
         except Exception as e:
-            logger.critical(f"Unexpected error while ending group {group_id}: {e}")
+            logger.critical(f"Unexpected error while ending group {self.group_id}: {e}")
 
 
+    ## End - Clear Class Variables / Attributes and Trackers
+    def clear_group_data(self):
+        """Clear all data associated with the study group."""
+        try:
+            # Remove instance of group from StudyGroupCog
+            if self.group_id in self.cog.study_groups:
+                self.cog.study_groups.pop(self.group_id)
 
+            
+            # Clear critical information
+            self.guild_id = None
+            self.name = None
+            self.group_id = None
+            self.creator_id = None
+            self.owner_id = None
+            self.category_id = None
+            self.max_members = 0
+            self.member_ids.clear()  # Clear member list
 
+            # Clear IDs for roles and channels
+            self.group_role_id = None
+            self.vc_id = None
+            self.text_id = None
 
+            # Clear VC settings
+            self.speak_enabled = None
+            self.video_mode = None
+            self.video_timer = None
 
-    # Helper Classes for Text, VC, and Messaging Functions
+            # Clear time-related attributes
+            self.start_time = None
+            self.duration = None
+            self.end_time = None
+            self.current_time = None
+
+            # Clear final state
+            self.active = False
+            self.guild = None
+            self.view = None  # Clear the View object if applicable
+
+            logger.info(f"Group data cleared for group '{self.name}'.")
+        except Exception as e:
+            logger.error(f"Error clearing data for group '{self.name}': {e}")
+
 
 
     class VCFunctions:
@@ -377,151 +861,50 @@ class StudyGroup:
             # Pseudocode for tracking time and kicking user if video is not turned on
             pass
 
-    class MessageFunctions:
-        def __init__(self, study_group : 'StudyGroup'):
-            self.study_group = study_group
 
-        async def send_welcome_message(self):
-            try:
-                # Retrieve the group role object
-                group : StudyGroup = self.study_group
-                role : discord.Role = group.guild.get_role(group.group_role_id)
-                send_channel : discord.TextChannel = group.guild.get_channel(group.text_id)
 
-                # Compose the welcome message
-                welcome_message = (
-                    f"🎉 Welcome to the **{group.name}** study group!\n"
-                    f"{role.mention}, you've been added to the group. Let's get studying together! 📚"
-                )
+    ## Send invite message to a member
+    async def send_invite(self, interaction, invited_member: discord.Member, send_channel: discord.TextChannel) -> None:
+        ### Invite a user to the group
+        try:
+            def check(interaction : discord.Interaction):
+                check_counter = interaction.message == invite_message and interaction.user == invited_member
 
-                # Send the message in the specified text channel
-                await send_channel.send(welcome_message)
+                if check_counter:
+                    logger.info(f"Interaction clicked by invited member: {interaction.user.display_name}.")
+                else:
+                    logger.info(f"Not correct interaction or interaction not clicked by invited member: {interaction.user.display_name}.")
 
-                logger.info(f"Welcome message sent in channel '{send_channel.name}' for group '{group.name}'.")
-                
-            except Exception as e:
-                logger.error(f"Error sending welcome message in channel '{send_channel.name}' for group '{group.name}': {e}")
+                return check_counter
 
-        
-        ## Disable buttons of a given message
-        async def disable_buttons(self, message: discord.Message) -> None:
-            ### Disable all buttons in the given message
+            await interaction.followup.send(
+                f"{invited_member.display_name} has been invited to the group {self.study_group.name}.",
+                ephemeral=True
+            )
+
             view = discord.ui.View()
-            for item in message.components:
-                item.disabled = True
-            await message.edit(view=view)
-    
+            view.add_item(discord.ui.Button(label="Accept", style=discord.ButtonStyle.green, emoji="✅"))
+            view.add_item(discord.ui.Button(label="Decline", style=discord.ButtonStyle.red, emoji="❌"))
 
-        async def group_info_embed(self) -> None:
-            # Get the group data
-            group = self.study_group
-            guild = group.guild
+            invite_message = await send_channel.send(
+                f"{invited_member.mention}, you have been invited to the group {self.study_group.name}.",
+                view=view
+            )
 
-            text_channel: discord.TextChannel = guild.get_channel(group.text_id)
-            voice_channel: discord.VoiceChannel = guild.get_channel(group.vc_id)
-            role: discord.Role = guild.get_role(group.group_role_id)
-            creator: discord.User = guild.get_member(group.creator_id)
-            owner: discord.User = guild.get_member(group.membership.owner_id)
+            interaction = await self.bot.wait_for("interaction", check=check)
+            if interaction.data.custom_id == "accept":
+                # handle accept logic
+                await self.study_group.add_member(invited_member)
+                await invite_message.edit(content=f"{invited_member.mention}, you have been invited to the group {self.study_group.name}.\n You have accepted the invitation to the group {self.study_group.name} and have been added!", view=None)
+                logger.info(f"Member {invited_member.display_name} accepted the invitation to the group and has been added.")
+            elif interaction.data.custom_id == "decline":
+                # handle decline logic
+                self.disable_buttons(invite_message)
+                await invite_message.edit(content=f"{invited_member.mention}, you have been invited to the group {self.study_group.name}.\nYou have declined the invitation to the group {self.study_group.name}.", view=view)
+                logger.info(f"Member {invited_member.display_name} declined the invitation to the group.")
 
-            # Create the embed
-            embed = discord.Embed(title=group.name)
-            embed.description = f"This group is for studying, and people are going to study hard in this!!!"
-            embed.add_field(name="Text Channel", value=text_channel.mention)
-            embed.add_field(name="Voice Channel", value=voice_channel.mention)
-            embed.add_field(name="Creator", value=creator.display_name, inline=True)
-            embed.add_field(name="Owner", value=owner.display_name, inline=True)
-            embed.add_field(name="Group Role", value=role.mention)
-            embed.add_field(name="Number of Members", value=len(group.membership.members), inline=True)
-            embed.add_field(name="Max Size", value=group.membership.max_size, inline=True)
-            embed.add_field(name="Group Duration", value=group.duration, inline=True)
-
-            await text_channel.send(embed=embed)
-    
-        # Button Interactions
-        async def button_view(self) -> None:
-            # Get the group data
-            group = self.study_group
-            guild = group.guild
-            send_channel: discord.TextChannel = guild.get_channel(group.text_id)
-
-            # Create the buttons
-            view = discord.ui.View()
-
-            # First line: Leave, Votekick, and End Group
-            view.add_item(discord.ui.Button(label="Leave Group", custom_id=generate_custom_id("leave_group", group.group_id, current_namespace)))
-            view.add_item(discord.ui.Button(label="Votekick", custom_id=generate_custom_id("votekick", group.group_id, current_namespace)))
-            view.add_item(discord.ui.Button(label="End Group", custom_id=generate_custom_id("end_group", group.group_id, current_namespace)))
-
-            # Second line: Speak and Video
-            view.add_item(discord.ui.Button(label="Speak On/Off", custom_id=generate_custom_id("speak_toggle", group.group_id, current_namespace)))
-            view.add_item(discord.ui.Button(label="Video On/Off/Force", custom_id=generate_custom_id("video_toggle", group.group_id, current_namespace)))
-
-            # Send the message with the button view
-            await send_channel.send(content="Here are your group control buttons:", view=view)
-
-
-        ## Send invite message to a member
-        async def send_invite(self, interaction, invited_member: discord.Member, send_channel: discord.TextChannel) -> None:
-            ### Invite a user to the group
-            try:
-                def check(interaction):
-                    check_counter = interaction.message == invite_message and interaction.user == invited_member
-
-                    if check_counter:
-                        logger.info(f"Interaction clicked by invited member: {interaction.user.display_name}.")
-                    else:
-                        logger.info(f"Not correct interaction or interaction not clicked by invited member: {interaction.user.display_name}.")
-
-                    return check_counter
-
-                await interaction.followup.send(
-                    f"{invited_member.display_name} has been invited to the group {self.study_group.name}.",
-                    ephemeral=True
-                )
-
-                view = discord.ui.View()
-                view.add_item(discord.ui.Button(label="Accept", style=discord.ButtonStyle.green, emoji="✅", custom_id=generate_custom_id("accept", self.study_group.group_id, current_namespace)))
-                view.add_item(discord.ui.Button(label="Decline", style=discord.ButtonStyle.red, emoji="❌", custom_id=generate_custom_id("decline", self.study_group.group_id, current_namespace)))
-
-                invite_message = await send_channel.send(
-                    f"{invited_member.mention}, you have been invited to the group {self.study_group.name}.",
-                    view=view
-                )
-
-                interaction = await self.bot.wait_for("interaction", check=check)
-                if interaction.data.custom_id == "accept":
-                    # handle accept logic
-                    await self.study_group.add_member(invited_member)
-                    await invite_message.edit(content=f"{invited_member.mention}, you have been invited to the group {self.study_group.name}.\n You have accepted the invitation to the group {self.study_group.name} and have been added!", view=None)
-                    logger.info(f"Member {invited_member.display_name} accepted the invitation to the group and has been added.")
-                elif interaction.data.custom_id == "decline":
-                    # handle decline logic
-                    self.disable_buttons(invite_message)
-                    await invite_message.edit(content=f"{invited_member.mention}, you have been invited to the group {self.study_group.name}.\nYou have declined the invitation to the group {self.study_group.name}.", view=view)
-                    logger.info(f"Member {invited_member.display_name} declined the invitation to the group.")
-
-            except Exception as e:
-                logger.error(f"Error inviting member {invited_member.display_name} to the group: {e}")
-
-        async def send_votekick_message(self, interaction):
-            await interaction.followup.send("Votekick is not implemented yet.", ephemeral=True)
-
-        async def send_speak_toggle_message(self, interaction):
-            await interaction.followup.send("Speak On/Off is not implemented yet.", ephemeral=True)
-
-        async def send_video_toggle_message(self, interaction):
-            await interaction.followup.send("Video On/Off/Force is not implemented yet.", ephemeral=True)
-
-        async def send_show_hide_group_message(self, interaction):
-            await interaction.followup.send("Show/Hide Group is not implemented yet.", ephemeral=True)
-
-    def rename_group(self, new_name):
-        """Rename the group."""
-        self.name = new_name
-
-    def extend_duration(self, additional_time):
-        """Extend the duration of the group's activity."""
-        pass
+        except Exception as e:
+            logger.error(f"Error inviting member {invited_member.display_name} to the group: {e}")
 
 
 
@@ -537,171 +920,54 @@ class StudyGroupCog(commands.Cog):
 
 
     @app_commands.command(name="create_group", description="Create a new study group")
-    @app_commands.describe(name="Set a name for your study group", max_size="Set the Max number of members", mentions="Mention roles or users to add", category="Category where the group channels will be created")
-    async def create_group(self, interaction: discord.Interaction, name: str, mentions : str, category: discord.CategoryChannel, max_size: int = 10):
+    @app_commands.describe(name="Set a name for your study group", max_members="Set the Max number of members", mentions="Mention roles or users to add", category="Category where the group channels will be created")
+    async def create_group(self, interaction: discord.Interaction, name: str, mentions : str, category: discord.CategoryChannel, max_members: int = 10):
        
         # Defer the message to prevent delays and avoid timeouts
         await interaction.response.defer()
+        
+        # Parsing members list into member IDs (will incorporate into parse_mentions directly later)
+        mentioned_member_ids : List[int] = parse_mentions(interaction, mentions)
+        
+        
         # Validate parameters before proceeding
-        try:
-            # Name Validation
-            if name is None or len(name) > 100:
-                await interaction.followup.send("Invalid group name. The name must be non-empty and less than 100 characters.", ephemeral=True)
-                logger.warning(f"Invalid group name provided: {name}")
-                return
-            
-            # Validate max_size
-            if max_size <= 0:
-                await interaction.followup.send(f"Invalid max_size: {max_size}. It must be a positive number.", ephemeral=True)
-                logger.warning(f"Invalid max_size provided: {max_size}")
-                return
+        if not await validate_parameters(
+            interaction = interaction,
+            name = name,
+            mentions = mentioned_member_ids,
+            max_members = max_members,
+            category = category,
 
-            # Parse mentions
-            try:
-                mentioned_members : List[discord.Member] = parse_mentions(interaction, mentions)
-                logger.info(f"Parsed mentions: {[mentioned_member.display_name for mentioned_member in mentioned_members]}")
-                if not mentioned_members:
-                    await interaction.followup.send("No valid members found in the mentions. Please mention valid users or roles.", ephemeral=True)
-                    logger.warning(f"No valid members found in mentions: {mentions}")
-                    return
-                if len(mentioned_members) > max_size:
-                    await interaction.followup.send(f"Too many members specified. Max allowed: {max_size}.", ephemeral=True)
-                    logger.warning(f"Too many members mentioned ({len(mentioned_members)}) compared to max_size: {max_size}")
-                    return
-                logger.info(f"Parsed mentions: {[member.display_name for member in mentioned_members]}")
-            except Exception as e:
-                logger.error(f"Error parsing mentions: {e}")
-                await interaction.followup.send(f"Error parsing mentions: {e}", ephemeral=True)
-                return
-
-            # Check if a valid category is provided
-            if category is None or category not in interaction.guild.categories:
-                await interaction.followup.send("No valid category specified. Please provide a valid category.", ephemeral=True)
-                logger.warning(f"No valid category provided or category not found in guild: {category}")
-                return
-
-        except discord.Forbidden as forbidden_e:
-            logger.error(f"Permission error during parameter validation: {forbidden_e}")
-            await interaction.followup.send(f"Permission error occurred while validating parameters: {forbidden_e}", ephemeral=True)
-            return
-
-        except discord.HTTPException as http_e:
-            logger.error(f"HTTP error during parameter validation: {http_e}")
-            await interaction.followup.send(f"HTTP error occurred while validating parameters: {http_e}", ephemeral=True)
-            return
-
-        except Exception as e:
-            logger.critical(f"Unexpected error during parameter validation: {e}")
-            await interaction.followup.send(f"An unexpected error occurred while validating parameters: {e}", ephemeral=True)
-            return
-
-        except Exception as e:
-            logger.error(f"Error during parameter validation: {e}")
-            await interaction.followup.send(f"Error during parameter validation: {e}", ephemeral=True)
-            return
-
+        ):
+            logger.error(f"Validation failed for {name} by user {interaction.user}")
+            return          # Exit if validation fails
         
-        try:
-            # Attempt to create the study group using the StudyGroup class
-            study_group = await StudyGroup.create_group(
-                interaction,      # Pass interaction, no need for guild or creator explicitly
-                name=name,
-                max_size=max_size,
-                mentioned_members=mentioned_members,
-                category=category
-            )
-
-            # Store the created group
-            self.study_groups[study_group.group_id] = study_group
-
-            # Start the check_end_condition task for this group
+            
+        study_group = StudyGroup(
+            db= self.bot.db,
+            cog = self,
+            guild_id = interaction.guild.id,
+            name = name,
+            creator_id = interaction.user.id,
+            category_id=category.id,
+            max_members=max_members,
+            member_ids=mentioned_member_ids
+        )
+        
+        # Collect result messages
+        result = await study_group.setup_group_resources(interaction)
+        
+        if study_group.active:
+            # If the setup was successful, start the end-condition check
             self.bot.loop.create_task(study_group.check_end_condition())
-
-            # Send confirmation to the user
-            await interaction.followup.send(f"Study group '{name}' has been created.", ephemeral=True)
-
-
-
-        except ValueError as ve:
-            logger.error(f"Validation error during group creation: {ve}")
-            await interaction.followup.send(str(ve), ephemeral=True)
-        except Exception as e:
-            logger.critical(f"Unexpected error during group creation: {e}")
-            await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
-
-    
-    @commands.Cog.listener()
-    async def on_component(self, interaction: discord.Interaction):
         
-        if interaction.type != discord.InteractionType.component:
-            return
-
-        await interaction.response.defer()
-
-        button_namespace, action, group_id = "", "", ""
-        logger.debug(f"Study Group: Interaction Data: {interaction}")
-
-
-        # Parse the custom ID from the interaction
-        try:
-            button_namespace, action, group_id = parse_custom_id(interaction)
-            
-            if button_namespace != current_namespace:
-                logger.warning(f"Interaction doesn't belong to: {current_namespace}. It belongs to another namespace: {button_namespace}")
-                return
-        except ValueError as e:
-            logger.error(f"Error processing interaction: {e}")
-            await interaction.followup.send("There was an error processing your request.", ephemeral=True)
-            return
-        except Exception as e:
-            logger.error(f"Unexpected error during custom_id parsing: {e}")
-            await interaction.followup.send("An unexpected error occurred while processing your request.", ephemeral=True)
-            return
-
-
-        # Fetch the study group from the study_groups dictionary
-        try:
-            group = self.study_groups.get(group_id)
-            if not group:
-                logger.warning(f"Group with ID {group_id} does not exist.")
-                await interaction.followup.send("This group does not exist.", ephemeral=True)
-                return
-        except Exception as e:
-            logger.error(f"Error fetching study group: {e}")
-            await interaction.followup.send("There was an error retrieving the group information.", ephemeral=True)
-            return
-
-        # Check if the user is a member of the group
-        try:
-            if interaction.user.id not in group.membership.members:
-                logger.warning(f"{interaction.user.display_name} tried to perform an action in a group they are not a member of: Group {group.name}")
-                await interaction.followup.send("You are not a member of this group.", ephemeral=True)
-                return
-        except Exception as e:
-            logger.error(f"Error checking group membership: {e}")
-            await interaction.followup.send("There was an error checking your membership status.", ephemeral=True)
-            return
-
-        # Handle the actions based on the button or interaction clicked
-        try:
-            if action == "leave_group":
-                await self.leave_group(interaction, group)
-            elif action == "end_group":
-                await self.end_group(interaction, group)
-            elif action == "transfer_owner":
-                await self.transfer_owner(interaction, group)
-            elif action == "invite_members":
-                await self.invite_members(interaction, group)
-            elif action == "kick_member":
-                await self.kick_member(interaction, group)
-            else:
-                logger.warning(f"Unknown action '{action}' received for group {group_id}.")
-                await interaction.followup.send("Unknown action. Please try again.", ephemeral=True)
-        except Exception as e:
-            logger.error(f"Error processing action '{action}' for group {group_id}: {e}")
-            await interaction.followup.send(f"An error occurred while processing your request: {e}", ephemeral=True)
-
+        # Add the study group to the dictionary
+        self.study_groups[study_group.group_id] = study_group
+        
+        # Send a single message to the user with the result of the operation
+        await interaction.followup.send(result, ephemeral=True)
  
+
 
 async def setup(bot):
     await bot.add_cog(StudyGroupCog(bot))
