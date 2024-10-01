@@ -1,23 +1,51 @@
-import sqlite3
 import asyncio
 from datetime import datetime
+
 import logging
 from typing import List, Any, Dict, Optional
+
+# Import Motor (async MongoDB driver)
+from motor.motor_asyncio import AsyncIOMotorClient
+import pymongo.errors  # Import for handling PyMongo exceptions
 
 logger = logging.getLogger(__name__)
 
 class DBHandler:
-    def __init__(self, db_name: str ='bot_database.sqlite'):
-        self.db_name :str = db_name
-        self.conn: Optional[sqlite3.Connection] = None
-        self.lock : asyncio.Lock = asyncio.Lock()
-        logger.info(f"Database initialized with name: {db_name}")
+    def __init__(self, mongo_uri: str, db_name: str):
+        self.mongo_uri = mongo_uri
+        self.db_name = db_name
+        self.client: Optional[AsyncIOMotorClient] = None
+        self.db: Optional[AsyncIOMotorClient] = None
+        self.lock: asyncio.Lock = asyncio.Lock()
+        logger.info("Database handler initialized for MongoDB.")
 
     async def connect(self):
-        self.conn = sqlite3.connect(self.db_name)
-        self.conn.row_factory = sqlite3.Row
-        logger.info(f"Connected to database: {self.db_name}")
-        await self.create_tables()
+        """Connect to the MongoDB database."""
+        try:
+            async with self.lock:
+                self.client = AsyncIOMotorClient(self.mongo_uri)
+                self.db = self.client[self.db_name]
+                logger.info(f"Connected to MongoDB database: {self.db_name}")
+
+                    # Create indexes (if needed)
+                await self.create_indexes()
+        except Exception as e:
+            logger.error(f"Error connecting to MongoDB: {e}")
+
+    async def create_indexes(self):
+        """Create indexes for efficient querying."""
+        try:
+            # Example: Create unique index on study_groups.group_id
+            await self.db['study_groups'].create_index("group_id", unique=True)
+            logger.info("Created unique index on study_groups.group_id")
+        except Exception as e:
+            logger.error(f"Error creating indexes: {e}")
+
+    async def close(self) -> None:
+        """Close the database connection."""
+        if self.client:
+            self.client.close()
+            logger.info("MongoDB connection closed.")            
 
     async def create_tables(self):
         async with self.lock:
@@ -167,7 +195,7 @@ class DBHandler:
             self.conn.commit()
             logger.info("Database tables created or verified.")
 
-    async def close(self) -> None:
+    async def close(self) -> None:  # noqa: F811
         """Close the database connection."""
         if self.conn:
             self.conn.close()
@@ -180,6 +208,14 @@ class DBHandler:
     async def save_study_group(self, study_group_data: Dict[str, Any]) -> None:
         """Insert a new study group into the database."""
         async with self.lock:
+            try:
+                result = await self.db['study_groups'].insert_one(study_group_data)
+                logger.info(f"Study group '{study_group_data['name']}' created with ID {result.inserted_id}")
+            except pymongo.errors.DuplicateKeyError:
+                logger.warning(f"Study group with ID {study_group_data['group_id']} already exists.")
+            except Exception as e:
+                logger.error(f"Error saving study group: {e}")
+
             cursor = self.conn.cursor()  # Generate a unique group ID
             cursor.execute('''
             INSERT INTO study_groups (
@@ -215,6 +251,18 @@ class DBHandler:
 
     ### Update Study Group
     async def update_study_group_by_id(self, study_group_data: Dict[str, Any]) -> None:
+        """Update a study group by its group_id."""
+        async with self.lock:
+            try:
+                group_id = study_group_data.pop('group_id')  # Remove group_id from update data
+                result = await self.db['study_groups'].update_one({'group_id': group_id}, {'$set': study_group_data})
+                if result.modified_count > 0:
+                    logger.info(f"StudyGroup '{study_group_data.get('name', 'Unknown')}' updated in the database.")
+                else:
+                    logger.warning(f"StudyGroup with ID {group_id} not found or not updated.")
+            except Exception as e:
+                logger.error(f"Error updating study group: {group_id} - {e}")  # More specific error message
+    
         # List of fields to update dynamically
         fields_to_update = []
         values = []
@@ -247,7 +295,6 @@ class DBHandler:
         if "info_embed_id" in study_group_data:
             fields_to_update.append("info_embed_id = ?")
             values.append(study_group_data["info_embed_id"])
-
 
         if "vc_id" in study_group_data:
             fields_to_update.append("vc_id = ?")
@@ -302,13 +349,28 @@ class DBHandler:
 
 
     ### Fetch Study Group by NAME (and GUILD ID)
-    async def fetch_study_group_by_name(self, name : str, guild_id : str) -> Dict[str, Any]:
+    async def fetch_study_group_by_name(self, name: str, guild_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch a study group by its name and guild ID."""
         async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT * FROM study_groups WHERE LOWER(name) = LOWER(?) AND guild_id = ?', (name, guild_id))
-            study_group_db = cursor.fetchone()
-            logger.debug(f"Retrieved study group by name '{name}' for guild {guild_id}: {'Found' if study_group_db else 'Not found'}")
-            return dict(study_group_db) if study_group_db else None
+            try:
+                study_group = await self.db['study_groups'].find_one({'name': name, 'guild_id': guild_id})
+                if study_group:
+                    logger.debug(f"Retrieved study group by name '{name}' for guild {guild_id}.")
+                    return study_group
+                else:
+                    logger.debug(f"Study group by name '{name}' for guild {guild_id} not found.")
+                    return None
+            except Exception as e:
+                logger.error(f"Error fetching study group by name '{name}' in guild {guild_id}: {e}")  # More specific
+                return None
+
+#    async def fetch_study_group_by_name(self, name : str, guild_id : str) -> Dict[str, Any]:
+#        async with self.lock:
+#            cursor = self.conn.cursor()
+#            cursor.execute('SELECT * FROM study_groups WHERE LOWER(name) = LOWER(?) AND guild_id = ?', (name, guild_id))
+#            study_group_db = cursor.fetchone()
+#            logger.debug(f"Retrieved study group by name '{name}' for guild {guild_id}: {'Found' if study_group_db else 'Not found'}")
+#            return dict(study_group_db) if study_group_db else None
 
 
     ### Fetch Study Group by GROUP ID
