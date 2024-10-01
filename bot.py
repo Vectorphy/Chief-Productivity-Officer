@@ -2,7 +2,6 @@ import logging
 import os
 
 import discord
-from discord.ext import commands
 from dotenv import load_dotenv
 
 import motor.motor_asyncio
@@ -22,14 +21,16 @@ intents.members = True
 intents.guilds = True
 intents.voice_states = True
 
-class CPO(commands.Bot):
+class CPO(discord.Bot):
     """
-    Main bot class that inherits from discord.ext.commands.Bot.
+    Main bot class that inherits from discord.Bot.
     Handles bot initialization, setup, cog loading, and error handling.
     """
     def __init__(self):
         super().__init__(command_prefix='!', intents=intents)
-        self.db = Database()
+        self.db = Database(mongo_uri=os.getenv('MONGO_DB_URI'), db_name=os.getenv('DB_NAME'))
+        self.bot_developer_id = int(os.getenv('BOT_DEVELOPER_ID'))
+
 
     async def setup_hook(self) -> None:
         """
@@ -66,7 +67,7 @@ class CPO(commands.Bot):
                 try:
                     await self.load_extension(f"cogs.{filename[:-3]}")
                     logger.info(f"Loaded extension: {filename[:-3]}")
-                except commands.ExtensionError as e:
+                except discord.errors.ExtensionError as e:
                     logger.error(f"Failed to load extension {filename[:-3]}: {e}")
 
     async def on_ready(self):
@@ -75,23 +76,23 @@ class CPO(commands.Bot):
         logger.info(f"Guilds: {len(self.guilds)}")
         logger.info(f"Users: {len(set(self.get_all_members()))}")
 
-    @commands.Cog.listener()
-    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
+    async def on_command_error(self, ctx: discord.ApplicationContext, error: discord.DiscordException):
         """
         Command error handler.
         Handles specific command errors and logs other errors.
         """
-        if isinstance(error, commands.CommandNotFound):
-            await ctx.send("Invalid command. Use `!help` for a list of commands.")
-        elif isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send(f"Missing required argument: {error.param}")
-        elif isinstance(error, commands.BadArgument):
-            await ctx.send(f"Bad argument: {str(error)}")
-        else:
-            logger.error(f"An error occurred: {error}")
-            await ctx.send("An error occurred while processing the command.")
+        if isinstance(error, discord.ApplicationCommandInvokeError):  # For general invocation errors
+        # ... handle the error, potentially accessing the original exception in error.original
+            if isinstance(error, discord.ApplicationCommandNotFound):
+                await ctx.send("Invalid command. Use `/` or `!help` for a list of commands.")
+            elif isinstance(error, discord.MissingRequiredArgument):
+                await ctx.send(f"Missing required argument: {error.param}")
+            elif isinstance(error, discord.BadArgument):
+                await ctx.send(f"Bad argument: {str(error)}")
+            else:
+                logger.error(f"An error occurred: {error}")
+                await ctx.send("An error occurred while processing the command.")
 
-    @commands.Cog.listener()
     async def on_app_command_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
         """
         Application command error handler.
@@ -105,7 +106,6 @@ class CPO(commands.Bot):
             logger.error(f"An error occurred in app command: {error}")
             await interaction.response.send_message("An error occurred while processing the command.", ephemeral=True)
 
-    @commands.Cog.listener()
     async def on_error(self, event, *args, **kwargs):
         """
         Global error handler for uncaught exceptions.
