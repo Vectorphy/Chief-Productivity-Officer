@@ -76,7 +76,7 @@ class CPO(discord.Bot):
         logger.info(f"Guilds: {len(self.guilds)}")
         logger.info(f"Users: {len(set(self.get_all_members()))}")
 
-    async def on_command_error(self, ctx: discord.ApplicationContext, error: discord.DiscordException):
+    async def on_application_command_error(self, ctx: discord.ApplicationContext, error: discord.DiscordException):
         """
         Command error handler.
         Handles specific command errors and logs other errors.
@@ -93,18 +93,18 @@ class CPO(discord.Bot):
                 logger.error(f"An error occurred: {error}")
                 await ctx.send("An error occurred while processing the command.")
 
-    async def on_app_command_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
-        """
-        Application command error handler.
-        Handles cooldown and permission errors and logs other errors.
-        """
-        if isinstance(error, discord.app_commands.CommandOnCooldown):
-            await interaction.response.send_message(f"This command is on cooldown. Try again in {error.retry_after:.2f} seconds.", ephemeral=True)
-        elif isinstance(error, discord.app_commands.MissingPermissions):
-            await interaction.response.send_message("You don't have the required permissions to use this command.", ephemeral=True)
-        else:
-            logger.error(f"An error occurred in app command: {error}")
-            await interaction.response.send_message("An error occurred while processing the command.", ephemeral=True)
+#    async def on_app_command_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+#        """
+#        Application command error handler.
+#        Handles cooldown and permission errors and logs other errors.
+#        """
+#        if isinstance(error, discord.app_commands.CommandOnCooldown):
+#            await interaction.response.send_message(f"This command is on cooldown. Try again in {error.retry_after:.2f} seconds.", ephemeral=True)
+#        elif isinstance(error, discord.app_commands.MissingPermissions):
+#            await interaction.response.send_message("You don't have the required permissions to use this command.", ephemeral=True)
+#        else:
+#            logger.error(f"An error occurred in app command: {error}")
+#            await interaction.response.send_message("An error occurred while processing the command.", ephemeral=True)
 
     async def on_error(self, event, *args, **kwargs):
         """
