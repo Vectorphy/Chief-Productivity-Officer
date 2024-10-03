@@ -7,9 +7,9 @@ from uuid import uuid4
 from motor.motor_asyncio import AsyncIOMotorClient
 import pymongo.errors
 
-logger = logging.getLogger(__name__)
+from .models import User, Space, StudySpace, WorkSpace, SocialSpace, UtilitySpace, Pod, CheckinSession, PomodoroSession, Task, GuildSettings
 
-from .models import StudyGroup, CheckinSession, Task, UserPermissions, GuildSettings
+logger = logging.getLogger(__name__)
 
 class DBHandler:
     """Handles asynchronous database interactions with MongoDB using Motor."""
@@ -38,8 +38,8 @@ class DBHandler:
     async def create_indexes(self):
         """Creates indexes for efficient querying."""
         try:
-            await self.db['study_groups'].create_index("group_id", unique=True)
-            logger.info("Created unique index on study_groups.group_id")
+            await self.db['spaces'].create_index("space_id", unique=True)
+            logger.info("Created unique index on spaces.space_id")
 
             # Add other indexes as needed
         except Exception as e:
@@ -51,60 +51,76 @@ class DBHandler:
             self.client.close()
             logger.info("MongoDB connection closed.")
 
-    # --- Study Group Operations ---
+    # --- Space Operations ---
 
-    async def save_study_group(self, study_group: StudyGroup) -> None:
-        """Saves a new study group to the database."""
+    async def save_space(self, space: Space) -> None:
+        """Saves a new space to the database."""
         try:
-            result = await self.db['study_groups'].insert_one(study_group.__dict__)
-            logger.info(f"Study group '{study_group.name}' created with ID {result.inserted_id}")
+            result = await self.db['spaces'].insert_one(space.__dict__)
+            logger.info(f"Space '{space.name}' created with ID {result.inserted_id}")
         except pymongo.errors.DuplicateKeyError:
-            logger.warning(f"Study group with ID {study_group.group_id} already exists.")
+            logger.warning(f"Space with ID {space.space_id} already exists.")
         except Exception as e:
-            logger.error(f"Error saving study group: {e}")
+            logger.error(f"Error saving space: {e}")
 
-    async def update_study_group_by_id(self, group_id: str, update_data: Dict[str, Any]) -> None:
-        """Updates a study group by its group_id."""
+    async def update_space_by_id(self, space_id: str, update_data: Dict[str, Any]) -> None:
+        """Updates a space by its space_id."""
         try:
-            result = await self.db['study_groups'].update_one({'group_id': group_id}, {'$set': update_data})
+            result = await self.db['spaces'].update_one({'space_id': space_id}, {'$set': update_data})
             if result.modified_count > 0:
-                logger.info(f"StudyGroup with ID {group_id} updated in the database.")
+                logger.info(f"Space with ID {space_id} updated in the database.")
             else:
-                logger.warning(f"StudyGroup with ID {group_id} not found or not updated.")
+                logger.warning(f"Space with ID {space_id} not found or not updated.")
         except Exception as e:
-            logger.error(f"Error updating study group: {group_id} - {e}")
+            logger.error(f"Error updating space: {space_id} - {e}")
 
-    async def fetch_study_group_by_name(self, name: str, guild_id: int) -> Optional[StudyGroup]:
-        """Fetches a study group by its name and guild ID."""
+    async def fetch_space_by_name(self, name: str, guild_id: int) -> Optional[Space]:
+        """Fetches a space by its name and guild ID."""
         try:
-            study_group_data = await self.db['study_groups'].find_one({'name': name, 'guild_id': guild_id})
-            if study_group_data:
-                return StudyGroup(**study_group_data)
-            else:
-                return None
-        except Exception as e:
-            logger.error(f"Error fetching study group by name '{name}' in guild {guild_id}: {e}")
-            return None
-
-    async def fetch_study_group_by_id(self, group_id: str) -> Optional[StudyGroup]:
-        """Fetches a study group by its group_id."""
-        try:
-            study_group_data = await self.db['study_groups'].find_one({'group_id': group_id})
-            if study_group_data:
-                return StudyGroup(**study_group_data)
+            space_data = await self.db['spaces'].find_one({'name': name, 'guild_id': guild_id})
+            if space_data:
+                return self._create_space_object(space_data)
             else:
                 return None
         except Exception as e:
-            logger.error(f"Error fetching study group by ID {group_id}: {e}")
+            logger.error(f"Error fetching space by name '{name}' in guild {guild_id}: {e}")
             return None
 
-    async def delete_study_group(self, group_id: str) -> None:
-        """Deletes a study group by its group_id."""
+    async def fetch_space_by_id(self, space_id: str) -> Optional[Space]:
+        """Fetches a space by its space_id."""
         try:
-            await self.db['study_groups'].delete_one({'group_id': group_id})
-            logger.info(f"Deleted study group with ID: {group_id}")
+            space_data = await self.db['spaces'].find_one({'space_id': space_id})
+            if space_data:
+                return self._create_space_object(space_data)
+            else:
+                return None
         except Exception as e:
-            logger.error(f"Error deleting study group with ID {group_id}: {e}")
+            logger.error(f"Error fetching space by ID {space_id}: {e}")
+            return None
+
+    async def delete_space(self, space_id: str) -> None:
+        """Deletes a space by its space_id."""
+        try:
+            await self.db['spaces'].delete_one({'space_id': space_id})
+            logger.info(f"Deleted space with ID: {space_id}")
+        except Exception as e:
+            logger.error(f"Error deleting space with ID {space_id}: {e}")
+
+    def _create_space_object(self, space_data: Dict[str, Any]) -> Space:
+        """Creates the appropriate Space subclass object based on the space type."""
+        space_type = space_data.get('type')
+        if space_type == 'study':
+            return StudySpace(**space_data)
+        elif space_type == 'work':
+            return WorkSpace(**space_data)
+        elif space_type == 'social':
+            return SocialSpace(**space_data)
+        elif space_type == 'utility':
+            return UtilitySpace(**space_data)
+        elif space_type == 'pod':
+            return Pod(**space_data)
+        else:
+            raise ValueError(f"Invalid space type: {space_type}")
 
     # --- Check-in Session Operations ---
 
@@ -148,6 +164,47 @@ class DBHandler:
             logger.info(f"Deleted check-in session with ID: {session_id}")
         except Exception as e:
             logger.error(f"Error deleting check-in session with ID {session_id}: {e}")
+
+    # --- Pomodoro Session Operations ---
+
+    async def save_pomodoro_session(self, pomodoro_session: PomodoroSession) -> None:
+        """Saves a new Pomodoro session to the database."""
+        try:
+            result = await self.db['pomodoro_sessions'].insert_one(pomodoro_session.__dict__)
+            logger.info(f"Pomodoro session created with ID {result.inserted_id}")
+        except Exception as e:
+            logger.error(f"Error saving Pomodoro session: {e}")
+
+    async def update_pomodoro_session(self, session_id: ObjectId, update_data: Dict[str, Any]) -> None:
+        """Updates a Pomodoro session by its session_id."""
+        try:
+            result = await self.db['pomodoro_sessions'].update_one({'_id': session_id}, {'$set': update_data})
+            if result.modified_count > 0:
+                logger.info(f"Pomodoro session with ID {session_id} updated in the database.")
+            else:
+                logger.warning(f"Pomodoro session with ID {session_id} not found or not updated.")
+        except Exception as e:
+            logger.error(f"Error updating Pomodoro session: {session_id} - {e}")
+
+    async def fetch_pomodoro_session(self, session_id: ObjectId) -> Optional[PomodoroSession]:
+        """Fetches a Pomodoro session by its session_id."""
+        try:
+            session_data = await self.db['pomodoro_sessions'].find_one({'_id': session_id})
+            if session_data:
+                return PomodoroSession(**session_data)
+            else:
+                return None
+        except Exception as e:
+            logger.error(f"Error fetching Pomodoro session by ID {session_id}: {e}")
+            return None
+
+    async def delete_pomodoro_session(self, session_id: ObjectId) -> None:
+        """Deletes a Pomodoro session by its session_id."""
+        try:
+            await self.db['pomodoro_sessions'].delete_one({'_id': session_id})
+            logger.info(f"Deleted Pomodoro session with ID: {session_id}")
+        except Exception as e:
+            logger.error(f"Error deleting Pomodoro session with ID {session_id}: {e}")
 
     # --- Task Operations ---
 
@@ -268,7 +325,3 @@ class DBHandler:
         """Deletes guild settings from the database."""
         try:
             await self.db['guild_settings'].delete_one({'guild_id': guild_id})
-            logger.info(f"Deleted guild settings for guild {guild_id}")
-        except Exception as e:
-            logger.error(f"Error deleting guild settings: {e}")
-# --
