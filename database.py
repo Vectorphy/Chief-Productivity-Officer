@@ -9,83 +9,7 @@ import pymongo.errors
 
 logger = logging.getLogger(__name__)
 
-class StudyGroup:
-    def __init__(self, _id: Optional[ObjectId] = None, guild_id: int, name: str, category_id: int, creator_id: int, 
-                 max_members: int = 10, member_ids: Optional[List[int]] = None, 
-                 group_role_id: Optional[int] = None, text_id: Optional[int] = None, 
-                 vc_id: Optional[int] = None, info_embed_id: Optional[int] = None, 
-                 start_time: Optional[datetime] = None, duration: int = 43200,  # 12 hours in seconds
-                 speak_enabled: bool = True, video_mode: str = "off", 
-                 video_timer: int = 10, active: bool = True,
-                 checkin_sessions: Optional[List[Dict]] = None):
-        self._id = _id or ObjectId()
-        self.guild_id = guild_id
-        self.name = name
-        self.group_id = str(uuid4())  # Generate a unique ID
-        self.creator_id = creator_id
-        self.owner_id = creator_id  # Initially, the creator is the owner
-        self.category_id = category_id
-        self.max_members = max_members
-        self.member_ids = member_ids or [creator_id]  # Creator is always a member
-        self.group_role_id = group_role_id
-        self.text_id = text_id
-        self.vc_id = vc_id
-        self.info_embed_id = info_embed_id
-        self.start_time = start_time or datetime.utcnow()
-        self.duration = duration
-        self.end_time = self.start_time + timedelta(seconds=duration)
-        self.speak_enabled = speak_enabled
-        self.video_mode = video_mode
-        self.video_timer = video_timer
-        self.active = active
-        self.checkin_sessions = checkin_sessions or []
-
-class CheckinSession:
-    def __init__(self, _id: Optional[ObjectId] = None, guild_id: int, name: str, creator_id: int, text_id: int,
-                 member_ids: Optional[List[int]] = None, duration: int = 3600,  # 1 hour in seconds
-                 start_time: Optional[datetime] = None, last_reminder_time: Optional[datetime] = None,
-                 next_reminder_time: Optional[datetime] = None, reminder_count: int = 0,
-                 last_reminder_message_id: Optional[int] = None, active: bool = True,
-                 study_group_id: Optional[ObjectId] = None):
-        self._id = _id or ObjectId()
-        self.guild_id = guild_id
-        self.name = name
-        self.creator_id = creator_id
-        self.owner_id = creator_id  # Initially, the creator is the owner
-        self.text_id = text_id
-        self.member_ids = member_ids or [creator_id]  # Creator is always a member
-        self.duration = duration
-        self.start_time = start_time or datetime.utcnow()
-        self.last_reminder_time = last_reminder_time or datetime.utcnow()
-        self.next_reminder_time = next_reminder_time or self.start_time + timedelta(seconds=duration)
-        self.reminder_count = reminder_count
-        self.last_reminder_message_id = last_reminder_message_id
-        self.active = active
-        self.study_group_id = study_group_id
-
-class Task:
-    def __init__(self, _id: Optional[ObjectId] = None, user_id: int, description: str, completed: bool = False, 
-                 created_at: Optional[datetime] = None):
-        self._id = _id or ObjectId()
-        self.user_id = user_id
-        self.description = description
-        self.completed = completed
-        self.created_at = created_at or datetime.utcnow()
-
-class UserPermissions:
-    def __init__(self, _id: Optional[ObjectId] = None, user_id: int, guild_id: int, permissions: List[str]):
-        self._id = _id or ObjectId()
-        self.user_id = user_id
-        self.guild_id = guild_id
-        self.permissions = permissions
-
-class GuildSettings:
-    def __init__(self, _id: Optional[ObjectId] = None, guild_id: int, vc_cleanup_time: int = 600, 
-                 vc_category_id: Optional[int] = None):
-        self._id = _id or ObjectId()
-        self.guild_id = guild_id
-        self.vc_cleanup_time = vc_cleanup_time
-        self.vc_category_id = vc_category_id
+from .models import StudyGroup, CheckinSession, Task, UserPermissions, GuildSettings
 
 class DBHandler:
     """Handles asynchronous database interactions with MongoDB using Motor."""
@@ -347,14 +271,4 @@ class DBHandler:
             logger.info(f"Deleted guild settings for guild {guild_id}")
         except Exception as e:
             logger.error(f"Error deleting guild settings: {e}")
-
-# Explanation of Changes:
-# Motor Operations: All database operations now use Motor's asynchronous methods (e.g., insert_one, update_one, find_one, delete_one).
-# Data Models: The operations use the GuildSettings data model to represent guild settings.
-# Error Handling: try...except blocks are used to catch potential errors, and specific Motor/PyMongo exceptions are handled where appropriate.
-# Logging: Detailed logging statements are included to provide context for database operations and errors.
-
-# Key Points:
-# Asynchronous Context: Ensure that these methods are called within an asynchronous context (using await) in your cogs.
-# Data Validation: You can add validation logic within the GuildSettings data model or in separate validation functions to ensure data integrity.
-# Unique Constraints: Consider adding a unique index on the guild_id field in the guild_settings collection to prevent duplicate entries.
+# --
