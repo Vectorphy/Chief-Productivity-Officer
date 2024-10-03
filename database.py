@@ -325,3 +325,101 @@ class DBHandler:
         """Deletes guild settings from the database."""
         try:
             await self.db['guild_settings'].delete_one({'guild_id': guild_id})
+
+    # --- User Operations ---
+
+    async def save_user(self, user: User) -> None:
+        """Saves a new user to the database."""
+        try:
+            await self.db['users'].insert_one(user.__dict__)
+            logger.info(f"User {user.user_id} saved to the database.")
+        except pymongo.errors.DuplicateKeyError:
+            logger.warning(f"User {user.user_id} already exists in the database.")
+        except Exception as e:
+            logger.error(f"Error saving user: {e}")
+
+    async def get_user(self, user_id: int, guild_id: int) -> Optional[User]:
+        """Retrieves a user from the database."""
+        try:
+            user_data = await self.db['users'].find_one({'user_id': user_id, 'guild_id': guild_id})
+            if user_data:
+                return User(**user_data)
+            else:
+                return None
+        except Exception as e:
+            logger.error(f"Error getting user {user_id} from the database: {e}")
+            return None
+
+    async def update_user(self, user_id: int, guild_id: int, update_data: Dict[str, Any]) -> None:
+        """Updates a user in the database."""
+        try:
+            result = await self.db['users'].update_one({'user_id': user_id, 'guild_id': guild_id}, {'$set': update_data})
+            if result.modified_count > 0:
+                logger.info(f"User {user_id} updated in the database.")
+            else:
+                logger.warning(f"User {user_id} not found or not updated.")
+        except Exception as e:
+            logger.error(f"Error updating user {user_id}: {e}")
+
+    async def delete_user(self, user_id: int, guild_id: int) -> None:
+        """Deletes a user from the database."""
+        try:
+            await self.db['users'].delete_one({'user_id': user_id, 'guild_id': guild_id})
+            logger.info(f"User {user_id} deleted from the database.")
+        except Exception as e:
+            logger.error(f"Error deleting user {user_id}: {e}")
+
+    # --- Pod Operations ---
+
+    async def save_pod(self, pod: Pod) -> None:
+        """Saves a new pod to the database."""
+        try:
+            result = await self.db['spaces'].insert_one(pod.__dict__)
+            logger.info(f"Pod '{pod.name}' created with ID {result.inserted_id} within Space {pod.parent_space_id}")
+        except pymongo.errors.DuplicateKeyError:
+            logger.warning(f"Pod with ID {pod.space_id} already exists.")
+        except Exception as e:
+            logger.error(f"Error saving pod: {e}")
+
+    async def update_pod_by_id(self, space_id: str, update_data: Dict[str, Any]) -> None:
+        """Updates a pod by its space_id."""
+        try:
+            result = await self.db['spaces'].update_one({'space_id': space_id, 'type': 'pod'}, {'$set': update_data})
+            if result.modified_count > 0:
+                logger.info(f"Pod with ID {space_id} updated in the database.")
+            else:
+                logger.warning(f"Pod with ID {space_id} not found or not updated.")
+        except Exception as e:
+            logger.error(f"Error updating pod: {space_id} - {e}")
+
+    async def fetch_pod_by_name(self, name: str, parent_space_id: ObjectId) -> Optional[Pod]:
+        """Fetches a pod by its name and parent space ID."""
+        try:
+            pod_data = await self.db['spaces'].find_one({'name': name, 'parent_space_id': parent_space_id, 'type': 'pod'})
+            if pod_data:
+                return Pod(**pod_data)
+            else:
+                return None
+        except Exception as e:
+            logger.error(f"Error fetching pod by name '{name}' within Space {parent_space_id}: {e}")
+            return None
+
+    async def fetch_pod_by_id(self, space_id: str) -> Optional[Pod]:
+        """Fetches a pod by its space_id."""
+        try:
+            pod_data = await self.db['spaces'].find_one({'space_id': space_id, 'type': 'pod'})
+            if pod_data:
+                return Pod(**pod_data)
+            else:
+                return None
+        except Exception as e:
+            logger.error(f"Error fetching pod by ID {space_id}: {e}")
+            return None
+
+    async def delete_pod(self, space_id: str) -> None:
+        """Deletes a pod by its space_id."""
+        try:
+            await self.db['spaces'].delete_one({'space_id': space_id, 'type': 'pod'})
+            logger.info(f"Deleted pod with ID: {space_id}")
+        except Exception as e:
+            logger.error(f"Error deleting pod with ID {space_id}: {e}")
