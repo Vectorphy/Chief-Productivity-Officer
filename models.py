@@ -136,6 +136,13 @@ class UserPermissions:
         self.guild_id = guild_id
         self.permissions = permissions
 
+class RolePermissions:
+    def __init__(self, _id: Optional[ObjectId] = None, role_id: int, guild_id: int, permissions: List[str]):
+        self._id = _id or ObjectId()
+        self.role_id = role_id
+        self.guild_id = guild_id
+        self.permissions = permissions
+
 class GuildSettings:
     def __init__(self, _id: Optional[ObjectId] = None, guild_id: int, vc_cleanup_time: int = 600, 
                  vc_category_id: Optional[int] = None, default_space_type: Optional[str] = None,
