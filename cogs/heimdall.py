@@ -82,7 +82,7 @@ class Heimdall(commands.Cog):
             # Grant permission to role
             role_permissions = await self.bot.db.fetch_role_permissions(entity.id, interaction.guild_id)
             if not role_permissions:
-                role_permissions = UserPermissions(user_id=None, guild_id=interaction.guild_id, permissions=[], role_id=entity.id)
+                role_permissions = RolePermissions(role_id=entity.id, guild_id=interaction.guild_id, permissions=[])
 
             if permission not in role_permissions.permissions:
                 role_permissions.permissions.append(permission)
