@@ -248,6 +248,52 @@ class DBHandler:
         """Deletes user permissions from the database."""
         await self._delete('user_permissions', {'user_id': user_id, 'guild_id': guild_id})
 
+        # --- Role Permissions Operations ---
+
+    async def add_role_permissions(self, role_permissions: UserPermissions) -> None:
+        """Adds role permissions to the database."""
+        try:
+            await self.db['user_permissions'].insert_one(role_permissions.__dict__)
+            logger.info(f"Added permissions for role {role_permissions.role_id} in guild {role_permissions.guild_id}")
+        except pymongo.errors.DuplicateKeyError:
+            logger.warning(f"Permissions for role {role_permissions.role_id} in guild {role_permissions.guild_id} already exist.")
+        except Exception as e:
+            logger.error(f"Error adding role permissions: {e}")
+
+    async def update_role_permissions(self, role_id: int, guild_id: int, permissions: List[str]) -> None:
+        """Updates role permissions in the database."""
+        try:
+            result = await self.db['user_permissions'].update_one(
+                {'role_id': role_id, 'guild_id': guild_id},
+                {'$set': {'permissions': permissions}}
+            )
+            if result.modified_count > 0:
+                logger.info(f"Updated permissions for role {role_id} in guild {guild_id}")
+            else:
+                logger.warning(f"Permissions for role {role_id} in guild {guild_id} not found or not updated.")
+        except Exception as e:
+            logger.error(f"Error updating role permissions: {e}")
+
+    async def fetch_role_permissions(self, role_id: int, guild_id: int) -> Optional[UserPermissions]:
+        """Retrieves role permissions from the database."""
+        try:
+            permissions_data = await self.db['user_permissions'].find_one({'role_id': role_id, 'guild_id': guild_id})
+            if permissions_data:
+                return UserPermissions(**permissions_data)
+            else:
+                return None
+        except Exception as e:
+            logger.error(f"Error getting permissions for role {role_id} in guild {guild_id}: {e}")
+            return None
+
+    async def delete_role_permissions(self, role_id: int, guild_id: int) -> None:
+        """Deletes role permissions from the database."""
+        try:
+            await self.db['user_permissions'].delete_one({'role_id': role_id, 'guild_id': guild_id})
+            logger.info(f"Removed permissions for role {role_id} in guild {guild_id}")
+        except Exception as e:
+            logger.error(f"Error removing role permissions: {e}")
+
     # --- Guild Settings Operations ---
 
     async def save_guild_settings(self, guild_settings: GuildSettings) -> None:
