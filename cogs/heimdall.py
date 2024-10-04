@@ -181,6 +181,40 @@ class Heimdall(commands.Cog):
         else:
             await interaction.response.send_message("Invalid entity. Please specify a user or a role.", ephemeral=True)
 
+    @app_commands.command(name="list_users_with_permission", description="List all users with a specific permission in this server")
+    @app_commands.describe(permission="The permission to list users for")
+    async def list_users_with_permission(self, interaction: discord.Interaction, permission: str):
+        logger.info(f"Listing users with permission '{permission}' for guild {interaction.guild_id}")
+
+        # Check if the permission is valid
+        valid_permissions = [
+            "create_space", "manage_space", "end_space", 
+            "start_checkin", "manage_checkin", 
+            "manage_pomodoro", "manage_tasks", 
+            "manage_voice_channels", "modify_bot_settings"
+        ]
+        if permission not in valid_permissions:
+            logger.warning(f"Invalid permission '{permission}' specified")
+            await interaction.response.send_message(f"Invalid permission. Valid permissions are: {', '.join(valid_permissions)}", ephemeral=True)
+            return
+
+        # Fetch all users with the specified permission
+        users_with_permission = []
+        async for user_permissions in self.bot.db.db['user_permissions'].find({'guild_id': interaction.guild_id, 'permissions': permission}):
+            user = await self.bot.fetch_user(user_permissions['user_id'])
+            users_with_permission.append(user)
+
+        # Create and send the embed
+        embed = discord.Embed(title=f"Users with Permission: {permission}", color=discord.Color.blue())
+        if users_with_permission:
+            for user in users_with_permission:
+                embed.add_field(name=f"{user.name}#{user.discriminator}", value=user.id, inline=False)
+        else:
+            embed.description = "No users found with this permission."
+
+        logger.debug(f"Found {len(users_with_permission)} users with permission '{permission}' for guild {interaction.guild_id}")
+        await interaction.response.send_message(embed=embed)
+
     @app_commands.command(name="get_permission_level", description="Get the permission level of a user (Bot Developer only)")
     @app_commands.describe(user="The user to get the permission level for")
     async def get_permission_level(self, interaction: discord.Interaction, user: discord.User):
