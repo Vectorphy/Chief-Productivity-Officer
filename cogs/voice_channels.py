@@ -1,8 +1,10 @@
 import discord
+
 from discord import app_commands
 from discord.ext import commands
 from utils import app_is_manager, is_group_creator
 import logging
+import database
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +19,7 @@ class VoiceChannels(commands.Cog):
     @app_is_manager()
     async def create_vc(self, interaction: discord.Interaction, name: str = None):
         logger.info(f"create_vc command invoked by {interaction.user}")
-        group = await self.bot.db.get_study_group(interaction.guild_id)
+        group = await self.bot.db.fetch_study_group_by_id(interaction.guild_id)
         if not group:
             logger.warning(f"No study group exists in server {interaction.guild_id}")
             await interaction.response.send_message("No study group exists in this server.", ephemeral=True)
@@ -50,37 +52,97 @@ class VoiceChannels(commands.Cog):
             logger.error(f"Failed to create voice channel: {str(e)}")
             await interaction.response.send_message("Failed to create the voice channel. Please try again later.", ephemeral=True)
 
-    @app_commands.command(name="delete_vc", description="Delete the voice channel for the study group")
+    @app_commands.command(name="delete_vc", description="Delete the selected VC from the Server")
+    @app_commands.describe(voice_channel="Select the VC to delete")
     @is_group_creator()
     @app_is_manager()
-    async def delete_vc(self, interaction: discord.Interaction):
-        logger.info(f"delete_vc command invoked by {interaction.user}")
+    async def delete_vc(self, interaction: discord.Interaction, voice_channel: discord.VoiceChannel):
+        logger.info(f"delete_vc command invoked by {interaction.user.display_name} in guild {interaction.guild.name}")
+
         group = await self.bot.db.get_study_group(interaction.guild_id)
-        if not group or not group[8]:  # Assuming voice_channel_id is at index 8
-            logger.warning(f"No voice channel exists for group in server {interaction.guild_id}")
-            await interaction.response.send_message("No voice channel exists for this group.", ephemeral=True)
+        if not group:
+            logger.warning(f"No study group found in server {interaction.guild_id}")
+            await interaction.response.send_message("No study group exists for this server.", ephemeral=True)
             return
 
-        channel = interaction.guild.get_channel(group[8])
-        if channel:
-            try:
-                await channel.delete()
-                await self.bot.db.update_voice_channel(group[0], None)
-                logger.info(f"Voice channel {channel.id} deleted for group {group[0]}")
-                await interaction.response.send_message("Voice channel deleted.")
-            except discord.HTTPException as e:
-                logger.error(f"Failed to delete voice channel: {str(e)}")
-                await interaction.response.send_message("Failed to delete the voice channel. Please try again later.", ephemeral=True)
-        else:
-            logger.warning(f"Voice channel {group[8]} no longer exists for group {group[0]}")
+        if voice_channel.id != group[8]:  # Assuming voice_channel_id is at index 8
+            logger.warning(f"Voice channel {voice_channel.id} is not associated with the study group {group[0]}")
+            await interaction.response.send_message("This voice channel is not associated with the current study group.", ephemeral=True)
+            return
+
+        try:
+            await voice_channel.delete(reason="Voice channel deleted by group creator")
             await self.bot.db.update_voice_channel(group[0], None)
-            await interaction.response.send_message("The voice channel no longer exists.")
+            logger.info(f"Voice channel {voice_channel.id} deleted for group {group[0]}")
+            await interaction.response.send_message("Voice channel deleted successfully.", ephemeral=True)
+        except discord.HTTPException as e:
+            logger.error(f"Failed to delete voice channel {voice_channel.id}: {str(e)}")
+            await interaction.response.send_message("Failed to delete the voice channel. Please try again later.", ephemeral=True)
+
+    @app_commands.command(name="delete_role", description="Delete the selected role for the study group")
+    @app_commands.describe(role="Select the Role to delete")
+    @is_group_creator()
+    @app_is_manager()
+    async def delete_role(self, interaction: discord.Interaction, role: discord.Role):
+        logger.info(f"delete_role command invoked by {interaction.user.display_name} in guild {interaction.guild.name}")
+
+        group = await self.bot.db.get_study_group(interaction.guild_id)
+        if not group:
+            logger.warning(f"No study group found in server {interaction.guild_id}")
+            await interaction.response.send_message("No study group exists for this server.", ephemeral=True)
+            return
+
+        if role.id != group[6]:  # Assuming group_role_id is at index 6
+            logger.warning(f"Role {role.id} is not associated with the study group {group[0]}")
+            await interaction.response.send_message("This role is not associated with the current study group.", ephemeral=True)
+            return
+
+        try:
+            await role.delete(reason="Role deleted by group creator")
+            await self.bot.db.update_group_roles(group[0], None, group[7])
+            logger.info(f"Role {role.id} deleted for group {group[0]}")
+            await interaction.response.send_message("Role deleted successfully.", ephemeral=True)
+        except discord.HTTPException as e:
+            logger.error(f"Failed to delete role {role.id}: {str(e)}")
+            await interaction.response.send_message("Failed to delete the role. Please try again later.", ephemeral=True)
+
+
+    @app_commands.command(name="delete_text_channel", description="Delete the selected text channel for the study group")
+    @app_commands.describe(text_channel="Select the Text Channel to delete")
+    @is_group_creator()
+    @app_is_manager()
+    async def delete_text_channel(self, interaction: discord.Interaction, text_channel: discord.TextChannel):
+        logger.info(f"delete_text_channel command invoked by {interaction.user.display_name} in guild {interaction.guild.name}")
+
+        group = await self.bot.db.get_study_group(interaction.guild_id)
+        if not group:
+            logger.warning(f"No study group found in server {interaction.guild_id}")
+            await interaction.response.send_message("No study group exists for this server.", ephemeral=True)
+            return
+
+        if text_channel.id != group[7]:  # Assuming text_channel_id is at index 7
+            logger.warning(f"Text channel {text_channel.id} is not associated with the study group {group[0]}")
+            await interaction.response.send_message("This text channel is not associated with the current study group.", ephemeral=True)
+            return
+
+        try:
+            await text_channel.delete(reason="Text channel deleted by group creator")
+            await self.bot.db.update_voice_channel(group[0], None)
+            logger.info(f"Text channel {text_channel.id} deleted for group {group[0]}")
+            await interaction.response.send_message("Text channel deleted successfully.", ephemeral=True)
+        except discord.HTTPException as e:
+            logger.error(f"Failed to delete text channel {text_channel.id}: {str(e)}")
+            await interaction.response.send_message("Failed to delete the text channel. Please try again later.", ephemeral=True)
+
+
+
+
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
         logger.debug(f"Voice state update: {member} moved from {before.channel} to {after.channel}")
         if before.channel and not after.channel:
-            group = await self.bot.db.get_study_group(before.channel.guild.id)
+            group = await self.bot.db.fetch_study_group_by_id(before.channel.guild.id)
             if group and group[8] == before.channel.id:
                 logger.debug(f"Member {member} left study group voice channel {before.channel.id}")
                 if not before.channel.members:
