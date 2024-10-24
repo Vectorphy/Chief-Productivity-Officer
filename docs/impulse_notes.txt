@@ -1,0 +1,268 @@
+### Study Group Notes
+
+Things to do to setup the StudyGroup Instance (using __init__ and the ):
+
+TO DO's
+1. Resolve the timestamp (in DB) / datetime (in class)
+    Solved
+     - For now, I havent implemented the timestamp storage, it's being stored as datetime 
+       (but what Timezone I don't know)
+2. See what all functions can benefit from DBHandler.update_study_group()
+ - And what other DB Operations become redundant
+3. Rename Group - Modal - isn't working
+     - Let's see what happens - I made a new class within the callback function
+4. When Group details are updated, it's not reflecting in the group_info_embed
+     - I have added an update flag, if it's true, existing message will update if not, it will send a new message
+5. The group details have to be updated after details change
+6. How to get the details of data stored in database, for cases when the bot restarts and such?
+
+To Do's for 7han0s and Vector 
+1. Incorporate self.info_message_embed variable into DB stuff - Throwing Error when I was testing it
+2. Change Checkin.py to incorporate button callback functions, instead of event listeners
+     - Every discord button can have a callback function coupled with it, where you can define what pressing the button does
+       See button_view function, and any of the callback functions after it.
+3. Test the code:
+    3.1. The database connect and storage, right now it's throwing some error bc I tried to add a field called self.info_embed_id
+         self.info_embed_id is used to keep track of the group_info_embed message, 
+         if it exists, it will update the details there, if not, it will send a new message with updated details
+         Particularly useful as details like owner, duration, name, etc can be changed
+    3.2. Test the buttons - 
+        3.2.1. End Button - Implemented
+                Test it, and see if there's any error, or problem in logic.
+                The way logic works is - button triggers a end_group_callback func,
+                There it sends a msg to the user.
+                Then it starts the end_group func - it starts then ending process
+                Note: Since first message is already sent in end_group_callback, all subsequent messages need to be sent via interaction.followup.send
+                        cuz the first time the message is sent after intreaction, it gets acknowledged and closed.
+        3.2.2. Extend Duration - Implemented
+                I've added the logic, includeing db update, and group_info_embed update
+                But I haven't tested it
+
+
+
+Info: 
+Interaction Buttons:
+    1. Invite to Group - Select Menu
+         - only member
+         - Not Implemented
+    2. Kick from Group - Select Menu
+         - only owner
+         - Not Implemented
+    3. Leave Group - Button - 
+         - only members
+    4. End Group - Button - 
+         - only owner
+         - Implemented
+    5. VoteKick from Group - Button - 
+         - only member
+    6. Speak On/Off Toggle - Button
+         - only owner (can change later)
+    7. Video On/Off/Force Toggle - Button
+         - only owner (can change later)
+    8. Extend Duration - Button - 
+         - only owner (can change later)
+         - Implemented (can be used by anyone)
+    9. Rename Group - Button
+         - only owner (can change later)
+         - Implemented (can be used by anyone)
+For later:
+    1. Show/Hide Toggle - Button
+         - only owner
+         - makes the group public/private
+    2. Lock/Unlock VC Toggle - Button
+         - only owner
+    3. Claim - Button
+         - only member
+         - Only if there's no owner
+
+
+
+
+
+StudyGroup Class
+Instantiation
+    1. Checks
+        To be done in using a validate_parameters function, so that only validated values are passed to constructor
+        
+        1.1. Name validation
+        1.2. Max size validation
+                We'll move this to one of the manager functions later.
+        1.3. Parse mentions
+        1.4. Validate mentions
+        1.5. Category validation
+                There's this cool feature where if I mention the type of the object (discord.Category) 
+                in the method of the slash command, it only prompts valid categories
+                thereby reducing garbage values being passed
+
+    
+    2. Instantiation
+        This is done using __init__
+        2.1. self.group_id
+                Generate Unique ID - a method inside class called generate_group_id() is used
+        2.2. self.name - from the parameter
+        2.3. self.max_size - from parameter
+        2.4. self.members - from parameter
+        2.5. self.category - from parameter
+
+    3. Post Instantiation Setup
+        This is done using setup_group_resources()
+        Creating Groups, VC, Text Channels
+        3.1. Create Group Role
+        3.2. Set Group Role Permissions
+        3.3. Create Group Voice Channel
+        3.4. Create Group Text Channel
+        3.5. Assign Role to Members
+        3.6. Assign stuff to StudyGroup object
+                3.6.1. self.group_role_id
+                3.6.2. self.text_id
+                3.6.3. self.vc_id
+        3.7. Store guild Object in the class instance
+        3.8. Set self.active = True
+                Putting this in the last so that 
+                this is enabled after everything else goes right
+
+    4. Insert new study group details
+        DB Function: save_study_group()
+        Data to be stored:
+        Guild Critical info
+                4.1.  self.guild_id
+                4.2.  self.name
+                4.3.  self.group_id
+                4.4.  self.category_id
+                4.5.  self.max_size
+                4.6.  self.members_ids
+                4.7.  self.creator_id
+                4.8.  self.owner_id
+        Time info
+                4.9.  self.start_time
+                4.10. self.duration
+                4.11. self.end_time
+                4.12. self.current_time
+        Role, VC, Text Channel info
+                4.13. self.group_role_id
+                4.14. self.text_channel_id
+                4.15. self.voice_channel_id
+                4.16. self.speak_enabled
+                4.17. self.video_mode
+                4.18. self.video_timer
+        Active info
+                4.19. self.active
+
+    5. Send messages
+        5.1. Send Welcome message
+                It's a separate function inside the StudyGroup class
+        5.2. Send Group Info Embed
+                It's a separate function inside the StudyGroup class
+        5.3. Send button View
+                It contains all the necessary action buttons
+        5.3. Send a Ping Message to the role
+
+
+General Purpose functions
+    1. generate_group_id()
+        Uses UUID 4 to generate a unique ID for each group
+        Since '-' and '_' characters are used
+        Tilde '~' is used to separate parts in Custom ID of buttons/menus
+
+
+Membership functions
+    All the membership functions will be here
+    Functions:
+        1. is_owner
+            - DB Func - fetch_owner_of_group()
+        2. is_member
+            - DB Func - fetch_members_of_group()
+        3. add_member
+            - DB Func - add_member_to_study_group_db()
+        4. remove_member
+            - DB Func - remove_member_from_study_group_db()
+        5. transfer_ownership
+            - DB Func - transfer_ownership_study_group_db()
+
+
+Message Functions:
+    All Message functions will be here:
+    Functions:
+        1. send_welcome_message
+            Trigger:
+             - Group Create
+        2. disable_buttons
+            Parameters:
+             - message - to disable buttons of the message
+            Trigger:
+             -  
+            This functionality will be used later
+        3. group_info_embed
+            Trigger:
+             - Group Create
+        4. button_view
+            Trigger:
+             - Group Create
+        5. send_ping_message
+            Trigger:
+             - Group Create
+        6. send_invite_message
+            Parameters: 
+             - user_id to invite
+             - channel to be sent in
+            Triggers:
+            - Select Menu (in Button View)
+        7.  
+
+
+
+
+
+Random useful bits of info and thoughts and ideas:
+    
+    Note 1: storing guild object is very useful
+            as it stores key information like channel and member information
+            thereby reducing API calls to Discord (helps stay under rate limit)
+    
+    Note 2: Deciding to use guild object for all class internal functions, 
+            and using ID (obtained from guild Object info) for all cross-class functions
+    
+    Note 3: Need to use another function to setup_group_resources()
+            bc I can't have async functions in the constructor
+
+    Note 4: Whenever a discord command or interaction is used, in that function, 
+            we first defer it, so that interaction 3 second timeout is not triggered
+            then we use interaction.followup.send() to send any messages required
+
+    Note 5: If you're handling errors and logging,
+            it's better to handle it inside the function you're calling
+            rather than the caller, to keep the caller code clean
+            Caller - the scope which calls the function / object / attribute
+            Callee - the function / object / attribute that's BEING CALLED
+        
+    Note 6: To Do: Between Class Variables and Database Calls,
+            Class Variables are called, but 
+            if it's missing or there's an error
+            Database Values are Fetched
+            (This needs to be implemented to make it more robust)
+    
+    Note 7: To Do: Make bot more robust to shutdowns and network outage
+            Also keep in mind that the bot may shut down and wake up
+            So it should have a function which fetches all the existing data from the db
+            Contrarily, when it's closing gracefully, it should compulsorily delete all the data from db
+    
+    Note 8: Updating DBs, for Checkin Sessions & Study Groups
+            I just realised, that for all DB operations by a certain identifying field (WHERE ?), 
+            we can pass two parameters, the session ID or the group ID or the member or whatever,
+            and the data to be updated, can be passed as a dict
+            But I haven't implemented it yet, I'd rather make my code work, than to change the signature of my funcs just this much
+
+
+
+
+# Checkin Session
+1. Add Checkin Session Names
+2. Owner should be able to change from creator - who can END Session
+3. Change from class objects to storing strings and int/floats for memory writing
+
+
+
+# Study Group
+1. End Group Button Broken
+ - SORTED
+     - issue with the relative time thing. But fixed it.
