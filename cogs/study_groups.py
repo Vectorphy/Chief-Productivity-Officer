@@ -42,10 +42,10 @@ class StudyGroup:
         self.video_timer : int = 10                                 # in seconds 
         
         # Time related attributes
-        self.start_time : datetime = datetime.now()
+        self.start_time : float = datetime.now().timestamp()
         self.duration : int = 12*60*60                              # Default duration of 12 hours
-        self.end_time : datetime = self.start_time + timedelta(seconds=self.duration)
-        self.curernt_time : datetime = datetime.now()
+        self.end_time : float = (self.start_time + timedelta(seconds=self.duration)).timestamp()
+        self.current_time : float = datetime.now().timestamp()
         
         # Final Stuff
         self.active : bool = False
@@ -65,13 +65,6 @@ class StudyGroup:
         return str(uuid.uuid4())
     
 
-    ## Support - Convert timestamp to datetime
-    def from_timestamp_to_datetime(self):
-        self.start_time = datetime.fromtimestamp(self.start_time)
-        self.end_time = datetime.fromtimestamp(self.end_time)
-
-    ## Support - Convert datetime to timestamp
-    ## - It's handled by .timestamp feature, so it's not needed
     
     ## Setup - Group Resources
     async def setup_group_resources(self, interaction: discord.Interaction) -> str:
@@ -606,7 +599,7 @@ class StudyGroup:
         try:
             extra_time : int = 3600  # Example: Extend by 1 hour
             self.duration += extra_time
-            self.end_time : datetime = self.end_time + timedelta(seconds=extra_time)
+            self.end_time : float = (datetime(self.end_time) + timedelta(seconds=extra_time)).timestamp
             # Update in the database (DBHandler function)
             await self.db.update_study_group_by_id({
                 "group_id": self.group_id,
@@ -674,7 +667,7 @@ class StudyGroup:
 
             # Continuously check the conditions
             while True:
-                current_time = datetime.now()
+                current_time : float = datetime.now().timestamp()
                 
                 # 1. Check if the group is marked inactive (active = False)
                 if not self.active:
@@ -778,8 +771,8 @@ class StudyGroup:
         """Clear all data associated with the study group."""
         try:
             # Remove instance of group from StudyGroupCog
-            if self.group_id in self.cog.study_groups:
-                self.cog.study_groups.pop(self.group_id)
+            if self.group_id in self.cog.active_study_groups:
+                self.cog.active_study_groups.pop(self.group_id)
 
             
             # Clear critical information
@@ -914,7 +907,7 @@ class StudyGroup:
 class StudyGroupCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.study_groups = {}
+        self.active_study_groups = {}
         logger.info("Study Group cog initialized")
 
 
@@ -962,7 +955,7 @@ class StudyGroupCog(commands.Cog):
             self.bot.loop.create_task(study_group.check_end_condition())
         
         # Add the study group to the dictionary
-        self.study_groups[study_group.group_id] = study_group
+        self.active_study_groups[study_group.group_id] = study_group
         
         # Send a single message to the user with the result of the operation
         await interaction.followup.send(result, ephemeral=True)
@@ -971,4 +964,7 @@ class StudyGroupCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(StudyGroupCog(bot))
-    logger.info("StudyGroups cog loaded")
+    logger.info("StudyGroupCog loaded")
+
+
+

@@ -3,6 +3,9 @@ from discord import app_commands
 from discord.ext import commands
 import logging
 from enum import Enum
+from functools import wraps
+from typing import List
+
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -14,10 +17,138 @@ class PermissionLevel(Enum):
     GROUP_MEMBER = 1
     REGULAR_USER = 0
 
+
 class Manager(commands.Cog):
+    max_sessions = 5
+    max_groups = 6
+    max_overall = 10
+
+
     def __init__(self, bot):
         self.bot = bot
         logger.info("Manager cog initialized")
+
+        
+
+
+
+
+    ### --- DECORATOR FUNCTIONS --- ###
+
+    # Decorator to check if user is a member
+    def is_member(func):
+        @wraps(func)
+        async def wrapper(instance, interaction: discord.Interaction, *args, **kwargs):
+            user_id = interaction.user.id
+            member_list : List[int]= []
+            class_name : str = ""
+            session_name : str = ""
+            logger.info(f"Checking if user {interaction.user.display_name} is a member...")
+
+            # Check for CheckinSession
+            if instance.__class__.__name__ == "CheckinSession":
+                member_list = instance.member_ids
+                class_name = type(instance).__name__
+                session_name = instance.name
+                logger.info(f"Instance is of type CheckinSession")
+
+            # Check for StudyGroup
+            if instance.__class__.__name__ == "StudyGroup":
+                member_list = instance.member_ids
+                class_name = type(instance).__name__
+                session_name = instance.name
+                logger.info(f"Instance is of type StudyGroup")
+            
+            if user_id in member_list:
+                logger.info(f"User {interaction.user.display_name} is a member of {class_name} with name: {session_name}")
+                return await func(instance, interaction, *args, **kwargs)
+            else:
+                logger.warning(f"User {interaction.user.display_name} is not a member of {class_name} with name: {session_name}")
+                await interaction.response.send_message(f"You are not a member of this {class_name} with name: {session_name}.", ephemeral=True)
+        return wrapper
+    
+
+    # Decorator to check if user is the owner
+    def is_owner(func):
+        @wraps(func)
+        async def wrapper(instance, interaction: discord.Interaction, *args, **kwargs):
+            user_id = interaction.user.id
+            owner_id : int = 0
+            class_name : str = ""
+            session_name : str = ""
+            logger.info(f"Checking if user {interaction.user.display_name} is a member...")
+
+            # Check for CheckinSession
+            if instance.__class__.__name__ == "CheckinSession":
+                owner_id = instance.owner_id
+                class_name = type(instance).__name__
+                session_name = instance.name
+                logger.info(f"Instance is of type CheckinSession")
+
+            # Check for StudyGroup
+            if instance.__class__.__name__ == "StudyGroup":
+                owner_id = instance.owner_id
+                class_name = type(instance).__name__
+                session_name = instance.name
+                logger.info(f"Instance is of type StudyGroup")
+            
+            if user_id == owner_id:
+                logger.info(f"User {interaction.user.display_name} is a the owner of {class_name} with name: {session_name}")
+                return await func(instance, interaction, *args, **kwargs)
+            else:
+                logger.warning(f"User {interaction.user.display_name} is not the owner of {class_name} with name: {session_name}")
+                await interaction.response.send_message(f"You are not the owner of this {class_name} with name: {session_name}.", ephemeral=True)
+        return wrapper
+
+
+    ## Check the max sessions / groups of a user
+    ## Expand as neeeded for other group / modules
+    def check_user_groups(func):
+        @wraps(func)
+        async def wrapper(cog_instance, interaction: discord.Interaction, *args, **kwargs):
+            logger.info(f"Checking if user {interaction.user.display_name} can join more modules...")
+            user_id = interaction.user.id
+            class_name = ""
+            checkin_count = 0
+            study_group_count = 0
+            overall_count = 0
+
+            # Check user participation in 'CheckinSession's
+            if cog_instance.__class__.__name__ == "CheckinCog":
+                class_name = type(cog_instance).__name__
+                logger.info(f"Instance is of type CheckinCog")
+                checkin_count = sum(user_id in session.member_ids for session in cog_instance.active_sessions.values())
+                overall_count += checkin_count
+                logger.info(f"User {interaction.user.display_name} has {checkin_count} checkin sessions")
+                if checkin_count >= Manager.max_sessions:
+                    logger.info(f"User {interaction.user.display_name} has joined {checkin_count} checkin sessions, more than the limit of {Manager.max_sessions}")
+                    await interaction.response.send_message(f"You are already in {checkin_count} check-in sessions. You can't join more.", ephemeral=True)
+                    return
+
+            # Check user participation in StudyGroups
+            if cog_instance.__class__.__name__ == "StudyGroupCog":
+                class_name = type(cog_instance).__name__
+                logger.info(f"Instance is of type StudyGroupCog")
+                checkin_count = sum(user_id in study_group.member_ids for study_group in cog_instance.active_study_groups.values())
+                overall_count += study_group_count
+                logger.info(f"User {interaction.user.display_name} has {study_group_count} study groups")
+                if study_group_count >= Manager.max_groups:
+                    logger.info(f"User {interaction.user.display_name} has joined {study_group_count} study groups, more than the limit of {Manager.max_groups}")
+                    await interaction.response.send_message(f"You are already in {study_group_count} study groups. You can't join more.", ephemeral=True)
+                    return
+
+            # Check overall participation limit
+            if overall_count >= Manager.max_overall:
+                logger.info(f"User {interaction.user.display_name} has joined {overall_count} total modules, more than the limit of {Manager.max_overall}")
+                await interaction.response.send_message(f"You are already in {overall_count} total groups/sessions. You can't join more.", ephemeral=True)
+                return
+
+            # If checks pass, proceed to the function
+            logger.info(f"User {interaction.user.display_name} can this module of {class_name}")
+            return await func(cog_instance, interaction, *args, **kwargs)
+        return wrapper
+  
+
 
     async def get_permission_level(self, guild_id, user_id):
         if user_id == self.bot.bot_developer_id:
@@ -85,12 +216,6 @@ class Manager(commands.Cog):
         logger.debug(f"Found {len(managers)} managers for guild {interaction.guild_id}")
         await interaction.response.send_message(embed=embed)
 
-    async def is_group_creator(self, guild_id, user_id):
-        group = await self.bot.db.get_study_group(guild_id)
-        is_creator = group and group['creator_id'] == user_id
-        logger.debug(f"Checked if user {user_id} is group creator for guild {guild_id}: {is_creator}")
-        return is_creator
-
     @app_commands.command(name="set_permission_level", description="Set the permission level for a user (Bot Developer only)")
     @app_commands.describe(
         user="The user to set permissions for",
@@ -120,5 +245,8 @@ class Manager(commands.Cog):
         await interaction.response.send_message(f"Set {user.name}'s permission level to {permission_names[level]}.", ephemeral=True)
 
 async def setup(bot):
+
     await bot.add_cog(Manager(bot))
     logger.info("Manager cog loaded")
+
+    
