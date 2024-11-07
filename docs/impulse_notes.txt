@@ -1,42 +1,17 @@
-### Study Group Notes
+### Study Group & Checkin Session Notes
 
 Things to do to setup the StudyGroup Instance (using __init__ and the ):
 
 TO DO's
-1. Resolve the timestamp (in DB) / datetime (in class)
-    Solved
-     - For now, I havent implemented the timestamp storage, it's being stored as datetime 
-       (but what Timezone I don't know)
-2. See what all functions can benefit from DBHandler.update_study_group()
- - And what other DB Operations become redundant
-3. Rename Group - Modal - isn't working
-     - Let's see what happens - I made a new class within the callback function
-4. When Group details are updated, it's not reflecting in the group_info_embed
-     - I have added an update flag, if it's true, existing message will update if not, it will send a new message
-5. The group details have to be updated after details change
-6. How to get the details of data stored in database, for cases when the bot restarts and such?
 
-To Do's for 7han0s and Vector 
-1. Incorporate self.info_message_embed variable into DB stuff - Throwing Error when I was testing it
-2. Change Checkin.py to incorporate button callback functions, instead of event listeners
-     - Every discord button can have a callback function coupled with it, where you can define what pressing the button does
-       See button_view function, and any of the callback functions after it.
-3. Test the code:
-    3.1. The database connect and storage, right now it's throwing some error bc I tried to add a field called self.info_embed_id
-         self.info_embed_id is used to keep track of the group_info_embed message, 
-         if it exists, it will update the details there, if not, it will send a new message with updated details
-         Particularly useful as details like owner, duration, name, etc can be changed
-    3.2. Test the buttons - 
-        3.2.1. End Button - Implemented
-                Test it, and see if there's any error, or problem in logic.
-                The way logic works is - button triggers a end_group_callback func,
-                There it sends a msg to the user.
-                Then it starts the end_group func - it starts then ending process
-                Note: Since first message is already sent in end_group_callback, all subsequent messages need to be sent via interaction.followup.send
-                        cuz the first time the message is sent after intreaction, it gets acknowledged and closed.
-        3.2.2. Extend Duration - Implemented
-                I've added the logic, includeing db update, and group_info_embed update
-                But I haven't tested it
+1. See what all functions can benefit from DBHandler.update_study_group()
+ - And what other DB Operations become redundant
+2. How to get the details of data stored in database, for cases when the bot restarts and such?
+ - I have implemented a func load_sessions_from_db for it
+3. Model Study Groups similar to Checkin Session
+ - Add Settings Class
+ - Maybe add decorator check functions
+
 
 
 
@@ -74,142 +49,6 @@ For later:
     3. Claim - Button
          - only member
          - Only if there's no owner
-
-
-
-
-
-StudyGroup Class
-Instantiation
-    1. Checks
-        To be done in using a validate_parameters function, so that only validated values are passed to constructor
-        
-        1.1. Name validation
-        1.2. Max size validation
-                We'll move this to one of the manager functions later.
-        1.3. Parse mentions
-        1.4. Validate mentions
-        1.5. Category validation
-                There's this cool feature where if I mention the type of the object (discord.Category) 
-                in the method of the slash command, it only prompts valid categories
-                thereby reducing garbage values being passed
-
-    
-    2. Instantiation
-        This is done using __init__
-        2.1. self.group_id
-                Generate Unique ID - a method inside class called generate_group_id() is used
-        2.2. self.name - from the parameter
-        2.3. self.max_size - from parameter
-        2.4. self.members - from parameter
-        2.5. self.category - from parameter
-
-    3. Post Instantiation Setup
-        This is done using setup_group_resources()
-        Creating Groups, VC, Text Channels
-        3.1. Create Group Role
-        3.2. Set Group Role Permissions
-        3.3. Create Group Voice Channel
-        3.4. Create Group Text Channel
-        3.5. Assign Role to Members
-        3.6. Assign stuff to StudyGroup object
-                3.6.1. self.group_role_id
-                3.6.2. self.text_id
-                3.6.3. self.vc_id
-        3.7. Store guild Object in the class instance
-        3.8. Set self.active = True
-                Putting this in the last so that 
-                this is enabled after everything else goes right
-
-    4. Insert new study group details
-        DB Function: save_study_group()
-        Data to be stored:
-        Guild Critical info
-                4.1.  self.guild_id
-                4.2.  self.name
-                4.3.  self.group_id
-                4.4.  self.category_id
-                4.5.  self.max_size
-                4.6.  self.members_ids
-                4.7.  self.creator_id
-                4.8.  self.owner_id
-        Time info
-                4.9.  self.start_time
-                4.10. self.duration
-                4.11. self.end_time
-                4.12. self.current_time
-        Role, VC, Text Channel info
-                4.13. self.group_role_id
-                4.14. self.text_channel_id
-                4.15. self.voice_channel_id
-                4.16. self.speak_enabled
-                4.17. self.video_mode
-                4.18. self.video_timer
-        Active info
-                4.19. self.active
-
-    5. Send messages
-        5.1. Send Welcome message
-                It's a separate function inside the StudyGroup class
-        5.2. Send Group Info Embed
-                It's a separate function inside the StudyGroup class
-        5.3. Send button View
-                It contains all the necessary action buttons
-        5.3. Send a Ping Message to the role
-
-
-General Purpose functions
-    1. generate_group_id()
-        Uses UUID 4 to generate a unique ID for each group
-        Since '-' and '_' characters are used
-        Tilde '~' is used to separate parts in Custom ID of buttons/menus
-
-
-Membership functions
-    All the membership functions will be here
-    Functions:
-        1. is_owner
-            - DB Func - fetch_owner_of_group()
-        2. is_member
-            - DB Func - fetch_members_of_group()
-        3. add_member
-            - DB Func - add_member_to_study_group_db()
-        4. remove_member
-            - DB Func - remove_member_from_study_group_db()
-        5. transfer_ownership
-            - DB Func - transfer_ownership_study_group_db()
-
-
-Message Functions:
-    All Message functions will be here:
-    Functions:
-        1. send_welcome_message
-            Trigger:
-             - Group Create
-        2. disable_buttons
-            Parameters:
-             - message - to disable buttons of the message
-            Trigger:
-             -  
-            This functionality will be used later
-        3. group_info_embed
-            Trigger:
-             - Group Create
-        4. button_view
-            Trigger:
-             - Group Create
-        5. send_ping_message
-            Trigger:
-             - Group Create
-        6. send_invite_message
-            Parameters: 
-             - user_id to invite
-             - channel to be sent in
-            Triggers:
-            - Select Menu (in Button View)
-        7.  
-
-
 
 
 
@@ -252,17 +91,34 @@ Random useful bits of info and thoughts and ideas:
             and the data to be updated, can be passed as a dict
             But I haven't implemented it yet, I'd rather make my code work, than to change the signature of my funcs just this much
 
+    Note 9: I just realised that we can have a single DB function to bot insert into, and update values
+            INSERT INTO ... ON DUPLICATE KEY UPDATE .... will take care of it.
+            We'll still need a fetch func for each db
+    
+    Note 10: My goal - Module Settings Command in its own module
+            This way all the settings of the class will stay in its own module, and can directly interact with its associated DB
+            Even the setup_checkin func I'm thinking to add it to checkin.py,
+            Only thing - there will be @is_manager decorator on top of that func.
+            This func will be from the Manager class.
+    
+    Note 11: Just learnt - can store JSON in DB
+            Serialised JSON strings can be stored to keep list of members, or list of whitelist/blacklist roles per guild in a single line
+            Although having a separate member list is good bc we're accessing individual members sometimes, 
+            But don't have to think about it during whitelist/blacklist roles
+    
+    Note 12: Discord Guild is a large object
+            Since Discord Guild is a large object, I plan on storing it only in one place, somewhere in manager.py
+            All modules will access that cache from manager.py to fetch roles/perms/users, whatever.
+            That way memory usage can be optimized
+            Right now CheckinSession and CheckinGuildSettings have a cache of the guild, for each instance
 
 
 
-# Checkin Session
-1. Add Checkin Session Names
-2. Owner should be able to change from creator - who can END Session
-3. Change from class objects to storing strings and int/floats for memory writing
 
+## Checkin Session - To Do's
+01 Ensure proper error handling and logging for the entire module, esp CheckinGuildSettings
+02 Prevent Key Errors by using .get(), esp while using DB functions and DB keys
+03 What if the Discord Member leaves the server? get_member() will return NoneType and lead to error. Same thing for fetch_message, get_roles, and whatever related
+04 Add hardcoded limits to max_members, min_duration, max_duration, max_absences, max_breaks, max_user_groups so that bot doesn't break
+05 Add DB storage of settings - the list of whitelist/blacklists can be stored as JSON/TEXT files, in a single cell, so settings of each guild can be stored in a single line
 
-
-# Study Group
-1. End Group Button Broken
- - SORTED
-     - issue with the relative time thing. But fixed it.

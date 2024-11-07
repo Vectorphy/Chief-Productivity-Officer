@@ -710,3 +710,5 @@ class DBHandler:
             tasks = cursor.fetchall()
             logger.debug(f"Retrieved {len(tasks)} tasks for user {user_id}")
             return tasks
+        
+
