@@ -34,7 +34,8 @@ class Pomodoro(commands.Cog):
     )
     async def start_pomodoro(self, interaction: discord.Interaction, focus: int = 25, short_break: int = 5, long_break: int = 15):
         logger.info(f"Attempt to start Pomodoro session by user {interaction.user.id}")
-        group = await self.bot.db.get_user_group(interaction.user.id)
+
+        group = await self.bot.db.get_user_group(interaction.user.id, interaction.channel_id)
         if not group:
             logger.warning(f"User {interaction.user.id} tried to start Pomodoro without being in a group")
             await interaction.response.send_message("You're not in any study group.", ephemeral=True)
@@ -47,6 +48,7 @@ class Pomodoro(commands.Cog):
 
         session = PomodoroSession(group['id'], focus, short_break, long_break)
         self.sessions[group['id']] = session
+        self.run_timer.start(interaction.guild_id, group['id'])
 
         voice_channel_id = group['vc_id']
         if not voice_channel_id:
@@ -66,12 +68,11 @@ class Pomodoro(commands.Cog):
 
         logger.info(f"Started Pomodoro session for group {group['id']}")
         await interaction.response.send_message(f"Pomodoro session started! Focus for {focus} minutes.")
-        self.run_timer.start(interaction.guild_id, group['id'])
 
     @app_commands.command(name="end_pomodoro", description="End the current Pomodoro session")
     async def end_pomodoro(self, interaction: discord.Interaction):
         logger.info(f"Attempt to end Pomodoro session by user {interaction.user.id}")
-        group = await self.bot.db.get_user_group(interaction.user.id)
+        group = await self.bot.db.get_user_group(interaction.user.id, interaction.channel_id)
         if not group or group['id'] not in self.sessions:
             logger.warning(f"No active Pomodoro session for user {interaction.user.id}")
             await interaction.response.send_message("No active Pomodoro session for your group.", ephemeral=True)
@@ -85,7 +86,7 @@ class Pomodoro(commands.Cog):
     @app_commands.command(name="pause_pomodoro", description="Pause the current Pomodoro session")
     async def pause_pomodoro(self, interaction: discord.Interaction):
         logger.info(f"Attempt to pause Pomodoro session by user {interaction.user.id}")
-        group = await self.bot.db.get_user_group(interaction.user.id)
+        group = await self.bot.db.get_user_group(interaction.user.id, interaction.channel_id)
         if not group or group['id'] not in self.sessions:
             logger.warning(f"No active Pomodoro session for user {interaction.user.id}")
             await interaction.response.send_message("No active Pomodoro session for your group.", ephemeral=True)
@@ -104,7 +105,7 @@ class Pomodoro(commands.Cog):
     @app_commands.command(name="resume_pomodoro", description="Resume the paused Pomodoro session")
     async def resume_pomodoro(self, interaction: discord.Interaction):
         logger.info(f"Attempt to resume Pomodoro session by user {interaction.user.id}")
-        group = await self.bot.db.get_user_group(interaction.user.id)
+        group = await self.bot.db.get_user_group(interaction.user.id, interaction.channel_id)
         if not group or group['id'] not in self.sessions:
             logger.warning(f"No active Pomodoro session for user {interaction.user.id}")
             await interaction.response.send_message("No active Pomodoro session for your group.", ephemeral=True)
@@ -172,7 +173,7 @@ class Pomodoro(commands.Cog):
     @app_commands.command(name="pomodoro_status", description="Check the status of the current Pomodoro session")
     async def pomodoro_status(self, interaction: discord.Interaction):
         logger.info(f"Pomodoro status check by user {interaction.user.id}")
-        group = await self.bot.db.get_user_group(interaction.user.id)
+        group = await self.bot.db.get_user_group(interaction.user.id, interaction.channel_id)
         if not group or group['id'] not in self.sessions:
             logger.warning(f"No active Pomodoro session for user {interaction.user.id}")
             await interaction.response.send_message("No active Pomodoro session for your group.", ephemeral=True)

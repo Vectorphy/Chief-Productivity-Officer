@@ -140,7 +140,7 @@ class StudyGroup:
 
         self.active = True
         logger.info(f"Study Group {self.name} is now active.")
-        
+
         # 5. Saving to the database
         try:
             await self.db.save_study_group(study_group_data={

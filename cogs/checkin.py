@@ -115,10 +115,10 @@ class CheckinGuildSettings:
         @wraps(func)
         async def wrapper(cog : 'CheckinCog', interaction: discord.Interaction, *args, **kwargs):
             guild_settings : CheckinGuildSettings = cog.guild_settings[interaction.guild.id] if cog.guild_settings else None
-            # role_ids = [role.id for role in interaction.user.roles]
-            # if not guild_settings or not guild_settings.has_permission(interaction.user.id, interaction.channel.id, role_ids):
-            #     await interaction.response.send_message("You don't have permission to use this command here.", ephemeral=True)
-            #     return
+            role_ids = [role.id for role in interaction.user.roles]
+            if not guild_settings or not guild_settings.has_permission(interaction.user.id, interaction.channel.id, role_ids):
+                await interaction.response.send_message("You don't have permission to use this command here.", ephemeral=True)
+                return
             return await func(cog, interaction, *args, **kwargs)
         return wrapper
     
@@ -936,8 +936,7 @@ class CheckinCog(commands.Cog):
             name = name,
             member_ids = member_ids,
             duration= duration,
-            max_members=10,
-            # settings=self.guild_settings[interaction.guild.id] or CheckinGuildSettings(interaction=interaction)
+            max_members=self.guild_settings[interaction.guild.id].max_members,
         ):
             logger.error(f"Checkin Session: Validation failed for {name} by user {interaction.user.display_name}")
             return          # Exit if validation fails

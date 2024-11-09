@@ -178,6 +178,25 @@ class DBHandler:
             self.conn.close()
             logger.info("Database connection closed.")
 
+    # TODO: saving pomodoro sessions
+    async def save_pomodoro_session(self, session) -> None:
+        async with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+            INSERT INTO pomodoro_sessions (
+                group_id, start_time, end_time, focus_duration, short_break_duration, long_break_duration
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                session['group_id'],
+                session['start_time'],
+                session['end_time'],
+                session['focus_duration'],
+                session['short_break_duration'],
+                session['long_break_duration'],
+            ))
+            self.conn.commit()
+            logger.info(f"pomodoro session for {session['group_id']} save")
+
 
     ### --- STUDY GROUP DB OPERATIONS --- ###
 
@@ -305,15 +324,15 @@ class DBHandler:
 
         logger.info(f"StudyGroup '{study_group_data.get('name', 'Unknown')}' updated in the database.")
 
-    async def get_user_group(self, user_id):
+    async def get_user_group(self, user_id, channel_id):
         async with self.lock:
             cursor = self.conn.cursor()
             cursor.execute('''
                 SELECT study_groups.*
                 FROM study_groups
                 JOIN study_groups_members ON study_groups.group_id = study_groups_members.group_id
-                WHERE study_groups_members.user_id = ?
-            ''', (user_id,))
+                WHERE study_groups_members.user_id = ? AND study_groups.text_id = ?
+            ''', (user_id, channel_id))
             group = cursor.fetchone()
             logger.debug(f"Retrieved group for user {user_id}: {'Found' if group else 'Not found'}")
             return group
