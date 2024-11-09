@@ -48,7 +48,7 @@ class Pomodoro(commands.Cog):
         session = PomodoroSession(group['id'], focus, short_break, long_break)
         self.sessions[group['id']] = session
 
-        voice_channel_id = group['voice_channel_id']
+        voice_channel_id = group['vc_id']
         if not voice_channel_id:
             voice_channel = await interaction.guild.create_voice_channel(f"{group['name']} VC")
             await self.bot.db.update_voice_channel(group['id'], voice_channel.id)
@@ -158,7 +158,7 @@ class Pomodoro(commands.Cog):
                 _, session_role_id = await self.bot.db.get_group_roles(group['id'])
                 session_role = guild.get_role(session_role_id)
                 if session_role:
-                    voice_channel_id = group['voice_channel_id']
+                    voice_channel_id = group['vc_id']
                     voice_channel = guild.get_channel(voice_channel_id)
                     if voice_channel:
                         await voice_channel.send(f"{session_role.mention} {message}")
