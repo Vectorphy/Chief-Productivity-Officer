@@ -22,16 +22,13 @@ class DBHandler:
     async def create_tables(self):
         async with self.lock:
             cursor = self.conn.cursor()
-            
-            # Check if the info_embed_id column exists
+
             cursor.execute("PRAGMA table_info(study_groups);")
             columns = [column[1] for column in cursor.fetchall()]
+            if 'group_id' not in columns:
+                cursor.execute('DROP TABLE IF EXISTS study_groups')
+                logger.info("Dropped study_groups table")
 
-            # If info_embed_id column does not exist, add it
-            if 'info_embed_id' not in columns:
-                cursor.execute('ALTER TABLE study_groups ADD COLUMN info_embed_id INTEGER DEFAULT 0;')
-                logger.info("Added 'info_embed_id' column to 'study_groups' table.")
-            
             ### STUDY GROUPS TABLE
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS study_groups (
@@ -57,6 +54,14 @@ class DBHandler:
             )
             ''')
             logger.info("Created 'study_groups' table.")
+
+            # Check if the info_embed_id column exists
+            cursor.execute("PRAGMA table_info(study_groups);")
+            columns = [column[1] for column in cursor.fetchall()]
+            # If info_embed_id column does not exist, add it
+            if 'info_embed_id' not in columns:
+                cursor.execute('ALTER TABLE study_groups ADD COLUMN info_embed_id INTEGER DEFAULT 0;')
+                logger.info("Added 'info_embed_id' column to 'study_groups' table.")
 
             ### STUDY GROUP MEMBERS TABLE
             cursor.execute('''
@@ -173,6 +178,25 @@ class DBHandler:
             self.conn.close()
             logger.info("Database connection closed.")
 
+    # TODO: saving pomodoro sessions
+    async def save_pomodoro_session(self, session) -> None:
+        async with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+            INSERT INTO pomodoro_sessions (
+                group_id, start_time, end_time, focus_duration, short_break_duration, long_break_duration
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                session['group_id'],
+                session['start_time'],
+                session['end_time'],
+                session['focus_duration'],
+                session['short_break_duration'],
+                session['long_break_duration'],
+            ))
+            self.conn.commit()
+            logger.info(f"pomodoro session for {session['group_id']} save")
+
 
     ### --- STUDY GROUP DB OPERATIONS --- ###
 
@@ -183,11 +207,11 @@ class DBHandler:
             cursor = self.conn.cursor()  # Generate a unique group ID
             cursor.execute('''
             INSERT INTO study_groups (
-                guild_id, name, group_id, creator_id, owner_id, category_id, 
-                max_members, group_role_id, vc_id, text_id, info_embed_id, 
+                guild_id, name, group_id, creator_id, owner_id, category_id,
+                max_members, group_role_id, vc_id, text_id, info_embed_id,
                 speak_enabled, video_mode, video_timer, 
                 start_time, end_time, duration, active
-            ) 
+            )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 study_group_data["guild_id"],
@@ -300,6 +324,18 @@ class DBHandler:
 
         logger.info(f"StudyGroup '{study_group_data.get('name', 'Unknown')}' updated in the database.")
 
+    async def get_user_group(self, user_id, channel_id):
+        async with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                SELECT study_groups.*
+                FROM study_groups
+                JOIN study_groups_members ON study_groups.group_id = study_groups_members.group_id
+                WHERE study_groups_members.user_id = ? AND study_groups.text_id = ?
+            ''', (user_id, channel_id))
+            group = cursor.fetchone()
+            logger.debug(f"Retrieved group for user {user_id}: {'Found' if group else 'Not found'}")
+            return group
 
     ### Fetch Study Group by NAME (and GUILD ID)
     async def fetch_study_group_by_name(self, name : str, guild_id : str) -> Dict[str, Any]:
@@ -330,7 +366,7 @@ class DBHandler:
         async with self.lock:
             cursor = self.conn.cursor()
             cursor.execute('''
-            INSERT OR IGNORE INTO study_group_members (group_id, user_id)
+            INSERT OR IGNORE INTO study_groups_members (group_id, user_id)
             VALUES (?, ?)
             ''', (group_id, user_id))
             self.conn.commit()
@@ -342,7 +378,7 @@ class DBHandler:
         async with self.lock:
             cursor = self.conn.cursor()
             cursor.execute('''
-            DELETE FROM group_members WHERE group_id = ? AND user_id = ?
+            DELETE FROM study_groups_members WHERE group_id = ? AND user_id = ?
             ''', (group_id, user_id))
             self.conn.commit()
             logger.info(f"Removed member {user_id} from StudyGroup {group_id}.")
@@ -363,7 +399,7 @@ class DBHandler:
     async def fetch_members_of_group(self, group_id: str) -> List[int]:
         async with self.lock:
             cursor = self.conn.cursor()
-            cursor.execute('SELECT user_id FROM group_members WHERE group_id = ?', (group_id,))
+            cursor.execute('SELECT user_id FROM study_groups_members WHERE group_id = ?', (group_id,))
             members_ids = [row['user_id'] for row in cursor.fetchall()]
             logger.debug(f"Fetched {len(members_ids)} members for StudyGroup {group_id}.")
             return members_ids
@@ -384,7 +420,7 @@ class DBHandler:
         async with self.lock:
             cursor = self.conn.cursor()
             cursor.execute('DELETE FROM study_groups WHERE id = ?', (group_id,))
-            cursor.execute('DELETE FROM group_members WHERE group_id = ?', (group_id,))
+            cursor.execute('DELETE FROM study_groups_members WHERE group_id = ?', (group_id,))
             self.conn.commit()
             logger.info(f"Deleted study group with ID: {group_id}")
 
@@ -395,9 +431,9 @@ class DBHandler:
             cursor = self.conn.cursor()
             cursor.execute('''
                 SELECT study_groups.* 
-                FROM study_groups 
-                JOIN study_group_members ON study_groups.id = study_group_members.group_id
-                WHERE study_group_members.user_id = ? AND study_groups.guild_id = ?
+                FROM study_groups
+                JOIN study_groups_members ON study_groups.id = study_groups_members.group_id
+                WHERE study_groups_members.user_id = ? AND study_groups.guild_id = ?
             ''', (user_id, guild_id))
             groups = cursor.fetchall()  # Fetch all groups within the guild
             logger.debug(f"Retrieved {len(groups)} group(s) for user {user_id} in guild {guild_id}.\n The groups are: {[group.name for group in groups]}")
@@ -710,5 +746,4 @@ class DBHandler:
             tasks = cursor.fetchall()
             logger.debug(f"Retrieved {len(tasks)} tasks for user {user_id}")
             return tasks
-        
 

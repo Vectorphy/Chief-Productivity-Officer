@@ -39,14 +39,14 @@ class StudyGroup:
         # VC Settings
         self.speak_enabled : bool = True
         self.video_mode : str = "off"
-        self.video_timer : int = 10                                 # in seconds 
-        
+        self.video_timer : int = 10                                 # in seconds
+
         # Time related attributes
         self.start_time : float = datetime.now().timestamp()
         self.duration : int = 12*60*60                              # Default duration of 12 hours
-        self.end_time : float = (self.start_time + timedelta(seconds=self.duration)).timestamp()
+        self.end_time: float = (datetime.fromtimestamp(self.start_time) + timedelta(seconds=self.duration)).timestamp()
         self.current_time : float = datetime.now().timestamp()
-        
+
         # Final Stuff
         self.active : bool = False
         
@@ -59,13 +59,13 @@ class StudyGroup:
 
 
 
-    ## Setup - Generate Group ID    
+    ## Setup - Generate Group ID
     def generate_group_id(self) -> str:
         # Generate a unique UUID v4 for the group
         return str(uuid.uuid4())
-    
 
-    
+
+
     ## Setup - Group Resources
     async def setup_group_resources(self, interaction: discord.Interaction) -> str:
         """
@@ -88,8 +88,8 @@ class StudyGroup:
             if not category or not isinstance(category, discord.CategoryChannel):
                 logger.error(f"Category not found with ID {self.category_id} in {self.guild_id}")
                 raise ValueError(f"Invalid category: {self.category_id} for StudyGroup '{self.name}'")
-                
-   
+
+
 
             text_channel = await category.create_text_channel(name=f"{self.name}-text", reason="Text channel for study group")
             voice_channel = await category.create_voice_channel(name=f"{self.name}-voice", reason="Voice channel for study group")
@@ -119,6 +119,7 @@ class StudyGroup:
                 member = self.guild.get_member(member_id)
                 if member:
                     await member.add_roles(self.guild.get_role(self.group_role_id))
+                    await self.db.add_member_to_study_group_db(self.group_id, member_id)
                     logger.info(f"Assigned role to member '{member.display_name}' for StudyGroup '{self.name}'")
                 else:
                     logger.warning(f"Member with ID '{member_id}' not found in guild '{self.guild_id}'")
@@ -139,7 +140,7 @@ class StudyGroup:
 
         self.active = True
         logger.info(f"Study Group {self.name} is now active.")
-        
+
         # 5. Saving to the database
         try:
             await self.db.save_study_group(study_group_data={
@@ -162,7 +163,7 @@ class StudyGroup:
                 "video_mode": self.video_mode,
                 "video_timer": self.video_timer,
                 "active": self.active
-            }) 
+            })
             logger.info(f"StudyGroup '{self.name}' saved to the database.")
         except Exception as e:
             self.active = False
@@ -221,12 +222,12 @@ class StudyGroup:
                 logger.warning(f"Member with ID {user_id} not found in the guild.")
                 await interaction.followup.send(f"Member with ID {user_id} not found.", ephemeral=True)
                 return
-            
+
             group_role : discord.Role = self.guild.get_role(self.group_role_id)
             # Retrieve the member and add the group role
             await member.add_roles(group_role)
             self.member_ids.append(user_id)
-            
+
             # Update the database after adding the member
             await self.db.add_member_to_study_group_db(self.group_id, user_id)
 
@@ -374,13 +375,13 @@ class StudyGroup:
             self.view.add_item(video_toggle_button)
             self.view.add_item(extend_button)
             self.view.add_item(rename_button)
-    
+
             # self.view.add_item(select)
             
             # Send the message with the button view
             await text_channel.send(content="Here are your group control buttons:", view=self.view)
             logger.info(f"Button view sent in channel '{text_channel.name}' for group '{self.name}'.")
-        
+
         except Exception as e:
             logger.error(f"Error sending button view in channel '{text_channel.name}' for group '{self.name}': {e}")
     
@@ -915,7 +916,6 @@ class StudyGroupCog(commands.Cog):
     @app_commands.command(name="create_group", description="Create a new study group")
     @app_commands.describe(name="Set a name for your study group", max_members="Set the Max number of members", mentions="Mention roles or users to add", category="Category where the group channels will be created")
     async def create_group(self, interaction: discord.Interaction, name: str, mentions : str, category: discord.CategoryChannel, max_members: int = 10):
-       
         # Defer the message to prevent delays and avoid timeouts
         await interaction.response.defer()
         
@@ -927,10 +927,9 @@ class StudyGroupCog(commands.Cog):
         if not await validate_parameters(
             interaction = interaction,
             name = name,
-            mentions = mentioned_member_ids,
+            member_ids = mentioned_member_ids,
             max_members = max_members,
             category = category,
-
         ):
             logger.error(f"Validation failed for {name} by user {interaction.user}")
             return          # Exit if validation fails

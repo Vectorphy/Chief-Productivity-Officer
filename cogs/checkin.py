@@ -114,7 +114,7 @@ class CheckinGuildSettings:
         """Decorator to check permissions for the `/checkin` command."""
         @wraps(func)
         async def wrapper(cog : 'CheckinCog', interaction: discord.Interaction, *args, **kwargs):
-            guild_settings : CheckinGuildSettings = cog.guild_settings[interaction.guild.id]
+            guild_settings : CheckinGuildSettings = cog.guild_settings[interaction.guild.id] if cog.guild_settings else None
             role_ids = [role.id for role in interaction.user.roles]
             if not guild_settings or not guild_settings.has_permission(interaction.user.id, interaction.channel.id, role_ids):
                 await interaction.response.send_message("You don't have permission to use this command here.", ephemeral=True)
@@ -127,8 +127,8 @@ class CheckinGuildSettings:
         """Decorator to check if a user is within the limit of allowed sessions/groups."""
         @wraps(func)
         async def wrapper(cog : 'CheckinCog', interaction: discord.Interaction, *args, **kwargs):
-            
-            guild_settings : CheckinGuildSettings = cog.guild_settings[interaction.guild.id]
+
+            guild_settings : CheckinGuildSettings = cog.guild_settings[interaction.guild.id] if cog.guild_settings else None
             if guild_settings:
                 user_sessions_count = sum(interaction.user.id in session.member_ids for session in cog.active_sessions.values())
                 if user_sessions_count >= guild_settings.max_user_sessions:
@@ -144,7 +144,7 @@ class CheckinGuildSettings:
 
 
 class CheckinSession:
-    # It's in class    
+    # It's in class
     prompt_messages = [
             "How's your progress?",
             "Any updates on your task?",
@@ -158,7 +158,7 @@ class CheckinSession:
         ]
 
     def __init__(self, db : DBHandler, cog : 'CheckinCog', interaction : discord.Interaction, name : str, member_ids: List[int], duration : int, settings: CheckinGuildSettings):
-        
+
         # Critical Info first
         self.guild_id : int = interaction.guild.id
         self.name : str = name
@@ -220,13 +220,13 @@ class CheckinSession:
             # Save members' data to the database
             for member_id, status_data in self.member_statuses.items():
                 await self.db.add_or_update_checkin_member(
-                    self.session_id, 
+                    self.session_id,
                     member_id, 
                     status_data[MemberStatusKey.STATUS.value], 
                     status_data[MemberStatusKey.ABSENCES.value]
                 )
             logger.info(f"Members' statuses for session {self.session_id} saved to the database.")
-        
+
         except Exception as e:
             logger.error(f"Failed to setup check-in resources: {str(e)}")
             raise
@@ -302,7 +302,7 @@ class CheckinSession:
     """Message Functions"""
 
     ## Embed Function - Create Embed
-    def create_embed(self, initial=False) -> discord.Embed:    
+    def create_embed(self, initial=False) -> discord.Embed:
         try:
             member_objs = [self.guild.get_member(member_id) for member_id in self.member_ids]
             present_objs = [self.guild.get_member(member_id) for member_id, status in self.member_statuses.items() if status[MemberStatusKey.STATUS.value] == MemberStatus.PRESENT.value]
@@ -832,8 +832,8 @@ class CheckinCog(commands.Cog):
         self.active_sessions = {}
         self.guild_settings = {}
         logger.debug("Check-in Cog initialized.")
-        
-        # bot.loop.create_task(self.load_active_sessions_from_db())
+
+        bot.loop.create_task(self.load_active_sessions_from_db())
         logger.info(f"Loaded {len(self.active_sessions)} active sessions from the database.")
 
 
@@ -871,7 +871,7 @@ class CheckinCog(commands.Cog):
                     else:
                         self.guild_settings[guild_id] = CheckinGuildSettings(None)
                 this_guild_settings = self.guild_settings[guild_id]
-                
+
                 # Create a new CheckinSession object
                 session = CheckinSession(
                     db=self.db,
@@ -923,17 +923,20 @@ class CheckinCog(commands.Cog):
     async def start_checkin(self, interaction : discord.Interaction, name: str, mentions: str, duration: str):
         await interaction.response.defer()
         # Parse the duration and mentions
-        
+
         duration_seconds = parse_duration(duration)
         member_ids : List[discord.Member] = parse_mentions(interaction, mentions)
-        
+
+        if interaction.guild.id not in self.guild_settings:
+            self.guild_settings[interaction.guild.id] = CheckinGuildSettings(interaction)
+
          # Validate parameters before proceeding
         if not await validate_parameters(
             interaction = interaction,
             name = name,
             member_ids = member_ids,
             duration= duration,
-            settings=self.guild_settings[interaction.guild.id] or CheckinGuildSettings(interaction=interaction)
+            max_members=self.guild_settings[interaction.guild.id].max_members,
         ):
             logger.error(f"Checkin Session: Validation failed for {name} by user {interaction.user.display_name}")
             return          # Exit if validation fails
@@ -946,7 +949,8 @@ class CheckinCog(commands.Cog):
                 interaction=interaction,
                 name=name,
                 member_ids=member_ids,
-                duration=duration_seconds
+                duration=duration_seconds,
+                settings=self.guild_settings[interaction.guild.id]
             )
             self.active_sessions[session.session_id] = session  # Store session by its ID
             logger.info(f"Check-in session with ID {session.session_id} started by {interaction.user.display_name} in channel {interaction.channel.id}.")
@@ -962,19 +966,19 @@ class CheckinCog(commands.Cog):
 
     ## Command - /setup_checkin
     @app_commands.command(name="settings_checkin", description="Changes the Settings of Checkin Module")
-    @app_commands.describe(max_members = "Maximum members allowed in a Checkin Session", 
+    @app_commands.describe(max_members = "Maximum members allowed in a Checkin Session",
                            min_duration = "Minimum Duration Allowed", 
                            max_duration = "Maximum Duration Allowed", 
                            max_absences = "Maximum absences allowed before a user is kicked", 
-                           max_breaks = "Maximum breaks allowed before a user is brought back to Checkin Session", 
+                           max_breaks = "Maximum breaks allowed before a user is brought back to Checkin Session",
                            max_user_sessions = "Maximum sessions a user is allowed to be in",
                            permission_mode = "Set permission mode: ALLOW or DENY"
                         )
     async def settings_checkin(
-        self, 
+        self,
         interaction: discord.Interaction, 
-        max_members : int = 10, 
-        min_duration : int = 20, 
+        max_members : int = 10,
+        min_duration : int = 20,
         max_duration : int = 7200, 
         max_absences : int = 3, 
         max_breaks : int = 3, 
