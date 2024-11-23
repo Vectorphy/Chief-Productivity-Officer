@@ -15,6 +15,7 @@ env/
 # IDE/Editor files
 .idea/
 .vscode/
+.idx/
 *.iml
 .project
 .classpath
@@ -24,6 +25,7 @@ env/
 .env.local
 .env.development.local
 .env.production.local
+.fae/
 
 # Database files
 *.sqlite3

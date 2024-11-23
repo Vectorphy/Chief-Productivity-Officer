@@ -2,7 +2,7 @@ import os
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
-from database import Database
+from database import DBHandler as Database
 import logging
 
 # Set up logging
@@ -76,7 +76,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: discord.
     elif isinstance(error, discord.app_commands.MissingPermissions):
         await interaction.response.send_message("You don't have the required permissions to use this command.", ephemeral=True)
     else:
-        logger.error(f"An error occurred in app command: {error}")
+        logger.exception(f"An error occurred in app command: {error}")
         await interaction.response.send_message("An error occurred while processing the command.", ephemeral=True)
 
 if __name__ == "__main__":
