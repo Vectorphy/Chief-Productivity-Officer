@@ -2,72 +2,94 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import asyncio
-from utils import parse_seconds_to_hms, parse_duration, parse_mentions, is_manager, app_is_manager
-import logging
+from utils import parse_seconds_to_hms, parse_duration, parse_mentions, app_is_manager
+import random
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# Array of user-friendly error phrases
+ERROR_PHRASES = [
+    "Oops! Something went wrong. Please try again.",
+    "Whoops! Let's give that another shot.",
+    "Hmm, that didn't work as expected. Try again?",
+    "Yikes! An error occurred. Please try later.",
+    "Oh no! We hit a snag. Please try once more.",
+    "Sorry about that! Let's try again.",
+    "Something didn't go as planned. Try again?",
+    "Looks like something went wrong. Please try again.",
+    "An unexpected error occurred. Please try again later.",
+    "We're having a little trouble. Please try again.",
+    "Sorry! We encountered an issue. Let's try again.",
+    "Hmmm, something's not right. Try again soon!",
+    "Our system stumbled. Please try again.",
+    "Let's try that again—something went wrong.",
+    "Oops! That didn't work as planned. Please try again.",
+    "We encountered an error. Please try again.",
+    "Apologies! Something went wrong. Please try once more.",
+    "It looks like there was an error. Try again?",
+    "Whoops! We ran into an issue. Please try again later.",
+    "Something went wrong on our end. Please try again."
+]
 
 class StudyGroups(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        logger.info("Study Group cog initialized")
 
     async def create_session_role(self, guild, session_name):
-        role_name = f"In {session_name}"
-        return await guild.create_role(name=role_name, mentionable=True)
+        try:
+            role_name = f"In {session_name}"
+            return await guild.create_role(name=role_name, mentionable=True)
+        except discord.errors.Forbidden:
+            return None
 
     @app_commands.command(name="create_group", description="Create a new study group")
     @app_commands.describe(name="Name of the study group", max_size="Maximum number of members")
     @app_is_manager()
     async def create_group(self, interaction: discord.Interaction, name: str, max_size: int = 10):
-        logger.info(f"create_group command invoked by {interaction.user.id} for group '{name}'")
-        # Check if a group with the same name already exists
-        existing_group = await self.bot.db.get_study_group_by_name(interaction.guild_id, name)
-        if existing_group:
-            await interaction.response.send_message(f"A study group named '{name}' already exists in this server.", ephemeral=True)
-            return
+        try:
+            await interaction.response.defer()
 
-        end_time = asyncio.get_event_loop().time() + 43200  # 12 hours
-        group_id = await self.bot.db.create_study_group(name, interaction.user.id, max_size, end_time, interaction.guild_id)
-        await self.bot.db.add_group_member(group_id, interaction.user.id)
+            existing_group = await self.bot.db.get_study_group_by_name(interaction.guild_id, name)
+            if existing_group:
+                await interaction.followup.send(f"A study group named '{name}' already exists in this server.", ephemeral=True)
+                return
 
-        # Create roles for the group
-        admin_role = await interaction.guild.create_role(name=f"Study Group Admin: {name}")
-        session_role = await self.create_session_role(interaction.guild, name)
+            end_time = asyncio.get_event_loop().time() + 43200  # 12 hours
+            group_id = await self.bot.db.create_study_group(name, interaction.user.id, max_size, end_time, interaction.guild_id)
+            await self.bot.db.add_group_member(group_id, interaction.user.id)
 
-        await interaction.user.add_roles(admin_role, session_role)
+            admin_role = await interaction.guild.create_role(name=f"Study Group Admin: {name}")
+            session_role = await self.create_session_role(interaction.guild, name)
+            
+            await interaction.user.add_roles(admin_role, session_role)
 
-        await self.bot.db.update_group_roles(group_id, admin_role.id, session_role.id)
+            await self.bot.db.update_group_roles(group_id, admin_role.id, session_role.id)
 
-        await interaction.response.send_message(
-            f"Study group '{name}' created! Use /join_group to join.\n"
-            f"You've been assigned the roles {admin_role.mention} and {session_role.mention}."
-        )
+            await interaction.followup.send(
+                f"Study group '{name}' created! Use /join_group to join.\n"
+                f"You've been assigned the roles {admin_role.mention} and {session_role.mention}."
+            )
+        except discord.errors.Forbidden:
+            await interaction.followup.send("I don't have permission to create roles or assign them. Please check my permissions and try again.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"{random.choice(ERROR_PHRASES)} (Only you can see this message)", ephemeral=True)
 
     @app_commands.command(name="join_group", description="Join an existing study group")
     @app_commands.describe(name="Name of the study group to join")
     async def join_group(self, interaction: discord.Interaction, name: str):
-        logger.info(f"User {interaction.user.id} attempting to join group '{name}'")
         try:
-            # Get all groups and find a case-insensitive match
-            all_groups = await self.bot.db.get_all_study_groups(interaction.guild_id)
-            group = next((g for g in all_groups if g['name'].lower() == name.lower()), None)
+            await interaction.response.defer()
 
+            group = await self.bot.db.get_study_group_by_name(interaction.guild_id, name)
             if not group:
-                logger.warning(f"No study group named '{name}' found for user {interaction.user.id}")
-                await interaction.response.send_message(f"No study group named '{name}' exists in this server. Available groups: {', '.join(g['name'] for g in all_groups)}", ephemeral=True)
+                await interaction.followup.send(f"No study group named '{name}' exists in this server.", ephemeral=True)
                 return
 
             members = await self.bot.db.get_group_members(group['id'])
             if len(members) >= group['max_size']:
-                logger.warning(f"Group '{name}' is full. User {interaction.user.id} couldn't join.")
-                await interaction.response.send_message("This group is full.", ephemeral=True)
+                await interaction.followup.send("This group is full.", ephemeral=True)
                 return
 
             if interaction.user.id in members:
-                logger.info(f"User {interaction.user.id} is already in group '{name}'")
-                await interaction.response.send_message("You're already in this study group.", ephemeral=True)
+                await interaction.followup.send("You're already in this study group.", ephemeral=True)
                 return
 
             await self.bot.db.add_group_member(group['id'], interaction.user.id)
@@ -78,206 +100,147 @@ class StudyGroups(commands.Cog):
             if session_role:
                 await interaction.user.add_roles(session_role)
 
-            logger.info(f"User {interaction.user.id} successfully joined group '{name}'")
-            await interaction.response.send_message(
-                f"You've joined the study group '{group['name']}'!\n"
+            await interaction.followup.send(
+                f"You've joined the study group '{name}'!\n"
                 f"You've been assigned the role {session_role.mention}."
             )
+        except discord.errors.Forbidden:
+            await interaction.followup.send("I don't have permission to assign roles. Please check my permissions and try again.", ephemeral=True)
         except Exception as e:
-            logger.error(f"Error in join_group command: {str(e)}", exc_info=True)
-            await interaction.response.send_message("An error occurred while processing the command. Please try again later.", ephemeral=True)
+            await interaction.followup.send(f"{random.choice(ERROR_PHRASES)} (Only you can see this message)", ephemeral=True)
 
     @app_commands.command(name="leave_group", description="Leave a study group")
     @app_commands.describe(name="Name of the study group to leave")
     async def leave_group(self, interaction: discord.Interaction, name: str):
-        group = await self.bot.db.get_study_group_by_name(interaction.guild_id, name)
-        if not group:
-            await interaction.response.send_message(f"No study group named '{name}' exists in this server.", ephemeral=True)
-            return
-    
-        members = await self.bot.db.get_group_members(group['id'])
-        if interaction.user.id not in members:
-            await interaction.response.send_message(f"You're not in the study group '{name}'.", ephemeral=True)
-            return
-    
-        await self.bot.db.remove_group_member(group['id'], interaction.user.id)
-    
-        admin_role_id, session_role_id = await self.bot.db.get_group_roles(group['id'])
-        session_role = interaction.guild.get_role(session_role_id)
-    
-        if session_role:
-            await interaction.user.remove_roles(session_role)
-    
-        await interaction.response.send_message(f"You've left the study group '{name}'.")
-    
-        updated_members = await self.bot.db.get_group_members(group['id'])
-        if not updated_members:
-            await self._end_group(interaction.guild_id, name)  # Use internal function
-            await interaction.followup.send(f"The study group '{name}' has been ended as there are no more members.")
-        
+        try:
+            await interaction.response.defer()
+
+            group = await self.bot.db.get_study_group_by_name(interaction.guild_id, name)
+            if not group:
+                await interaction.followup.send(f"No study group named '{name}' exists in this server.", ephemeral=True)
+                return
+
+            members = await self.bot.db.get_group_members(group['id'])
+            if interaction.user.id not in members:
+                await interaction.followup.send(f"You're not in the study group '{name}'.", ephemeral=True)
+                return
+
+            await self.bot.db.remove_group_member(group['id'], interaction.user.id)
+            
+            admin_role_id, session_role_id = await self.bot.db.get_group_roles(group['id'])
+            session_role = interaction.guild.get_role(session_role_id)
+            
+            if session_role:
+                await interaction.user.remove_roles(session_role)
+            
+            await interaction.followup.send(f"You've left the study group '{name}'.")
+
+            updated_members = await self.bot.db.get_group_members(group['id'])
+            if not updated_members:
+                await self.end_group(interaction.guild_id, name)
+        except discord.errors.Forbidden:
+            await interaction.followup.send("I don't have permission to remove roles. Please check my permissions and try again.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"{random.choice(ERROR_PHRASES)} (Only you can see this message)", ephemeral=True)
+
     @app_commands.command(name="end_group", description="End a study group")
     @app_commands.describe(name="Name of the study group to end")
     @app_is_manager()
-    async def end_group(self, interaction: discord.Interaction, name: str):
+    async def end_group_command(self, interaction: discord.Interaction, name: str):
         try:
+            await interaction.response.defer()
+
             group = await self.bot.db.get_study_group_by_name(interaction.guild_id, name)
             if not group:
-                await interaction.response.send_message(f"No study group named '{name}' exists in this server.", ephemeral=True)
+                await interaction.followup.send(f"No study group named '{name}' exists in this server.", ephemeral=True)
                 return
 
-            # Check if the user invoking the command is the group creator or a manager
-            if not (group['creator_id'] == interaction.user.id or await is_manager(self.bot, interaction.guild_id, interaction.user.id)):
-                await interaction.response.send_message("You don't have permission to end this group.", ephemeral=True)
-                return
-
-            await interaction.response.defer()  # Defer the response as the operation might take some time
-            result = await self._end_group(interaction.guild_id, name)
-            await interaction.followup.send(result)
+            await self.end_group(interaction.guild_id, name)
+            await interaction.followup.send(f"The study group '{name}' has been ended.")
+        except discord.errors.Forbidden:
+            await interaction.followup.send("I don't have permission to delete roles. Please check my permissions and try again.", ephemeral=True)
         except Exception as e:
-            logger.error(f"Error in end_group command: {str(e)}", exc_info=True)
-            await interaction.followup.send("An error occurred while ending the group. Please try again later.", ephemeral=True)
+            await interaction.followup.send(f"{random.choice(ERROR_PHRASES)} (Only you can see this message)", ephemeral=True)
 
-    async def _end_group(self, guild_id, name):  # Internal helper function
-        group = await self.bot.db.get_study_group_by_name(guild_id, name)
-        if not group:
-            return f"No study group named '{name}' exists in this server."
-
-        guild = self.bot.get_guild(guild_id)
-        if not guild:
-            logger.error(f"Guild {guild_id} not found")
-            return "An error occurred while ending the group."
-
-        admin_role_id, session_role_id = await self.bot.db.get_group_roles(group['id'])
-        
-        # Delete admin role
-        admin_role = guild.get_role(admin_role_id)
-        if admin_role:
-            try:
-                await asyncio.sleep(2)  # Add a 2-second delay
-                await admin_role.delete()
-                logger.info(f"Deleted admin role {admin_role_id} for group {group['id']}")
-            except discord.Forbidden:
-                logger.warning(f"Bot lacks permission to delete admin role {admin_role_id}")
-            except Exception as e:
-                logger.error(f"Error deleting admin role: {str(e)}")
-
-        # Delete session role
-        session_role = guild.get_role(session_role_id)
-        if session_role:
-            try:
-                await asyncio.sleep(2)  # Add a 2-second delay
-                await session_role.delete()
-                logger.info(f"Deleted session role {session_role_id} for group {group['id']}")
-            except discord.Forbidden:
-                logger.warning(f"Bot lacks permission to delete session role {session_role_id}")
-            except Exception as e:
-                logger.error(f"Error deleting session role: {str(e)}")
-
-        # Delete voice channel
-        voice_channel_id = group[8]  # Assuming voice_channel_id is at index 8
-        if voice_channel_id:
-            channel = guild.get_channel(voice_channel_id)
-            if channel:
-                try:
-                    await channel.delete()
-                    await self.bot.db.update_voice_channel(group['id'], None)
-                    logger.info(f"Deleted voice channel {voice_channel_id} for group {group['id']}")
-                except discord.Forbidden:
-                    logger.warning(f"Bot lacks permission to delete voice channel {voice_channel_id}")
-                except Exception as e:
-                    logger.error(f"Error deleting voice channel: {str(e)}")
-            else:
-                logger.warning(f"Voice channel {voice_channel_id} no longer exists for group {group['id']}")
-                await self.bot.db.update_voice_channel(group['id'], None)
-
-        # Delete the group from the database
-        await self.bot.db.delete_study_group(group['id'])
-        logger.info(f"Deleted study group {group['id']} ({name}) from the database")
-
-        return f"The study group '{name}' has been ended."
+    async def end_group(self, guild_id, name):
+        try:
+            group = await self.bot.db.get_study_group_by_name(guild_id, name)
+            if group:
+                admin_role_id, session_role_id = await self.bot.db.get_group_roles(group['id'])
+                guild = self.bot.get_guild(guild_id)
+                
+                admin_role = guild.get_role(admin_role_id)
+                session_role = guild.get_role(session_role_id)
+                
+                if admin_role:
+                    await admin_role.delete()
+                if session_role:
+                    await session_role.delete()
+                
+                await self.bot.db.delete_study_group(group['id'])
+        except Exception as e:
+            print(f"Error ending group: {e}")
 
     @app_commands.command(name="list_groups", description="List all study groups in the server")
     async def list_groups(self, interaction: discord.Interaction):
-        groups = await self.bot.db.get_all_study_groups(interaction.guild_id)
-        if not groups:
-            await interaction.response.send_message("There are no active study groups in this server.", ephemeral=True)
-            return
+        try:
+            await interaction.response.defer()
 
-        embed = discord.Embed(title="Active Study Groups", color=discord.Color.blue())
-        for group in groups:
-            members = await self.bot.db.get_group_members(group['id'])
-            embed.add_field(
-                name=group['name'],
-                value=f"Members: {len(members)}/{group['max_size']}",
-                inline=False
-            )
+            groups = await self.bot.db.get_all_study_groups(interaction.guild_id)
+            if not groups:
+                await interaction.followup.send("There are no active study groups in this server.", ephemeral=True)
+                return
 
-        await interaction.response.send_message(embed=embed)
+            embed = discord.Embed(title="Active Study Groups", color=discord.Color.blue())
+            for group in groups:
+                members = await self.bot.db.get_group_members(group['id'])
+                embed.add_field(
+                    name=group['name'],
+                    value=f"Members: {len(members)}/{group['max_size']}",
+                    inline=False
+                )
+
+            await interaction.followup.send(embed=embed)
+        except Exception as e:
+            await interaction.followup.send(f"{random.choice(ERROR_PHRASES)} (Only you can see this message)", ephemeral=True)
 
     @app_commands.command(name="invite_to_group", description="Invite a user to your study group")
     @app_commands.describe(group_name="Name of the study group", user="User to invite")
     async def invite_to_group(self, interaction: discord.Interaction, group_name: str, user: discord.Member):
         try:
-            # Check if the group exists
+            await interaction.response.defer()
+
             group = await self.bot.db.get_study_group_by_name(interaction.guild_id, group_name)
             if not group:
-                await interaction.response.send_message(f"No study group named '{group_name}' exists in this server.", ephemeral=True)
+                await interaction.followup.send(f"No study group named '{group_name}' exists in this server.", ephemeral=True)
                 return
 
-            # Check if the inviter is in the group
             members = await self.bot.db.get_group_members(group['id'])
             if interaction.user.id not in members:
-                await interaction.response.send_message(f"You're not a member of the study group '{group_name}'.", ephemeral=True)
+                await interaction.followup.send(f"You're not a member of the study group '{group_name}'.", ephemeral=True)
                 return
 
-            # Check if the invited user is already in the group
             if user.id in members:
-                await interaction.response.send_message(f"{user.display_name} is already in the study group '{group_name}'.", ephemeral=True)
+                await interaction.followup.send(f"{user.display_name} is already in the study group '{group_name}'.", ephemeral=True)
                 return
 
-            # Check if the group is full
             if len(members) >= group['max_size']:
-                await interaction.response.send_message(f"The study group '{group_name}' is full.", ephemeral=True)
+                await interaction.followup.send(f"The study group '{group_name}' is full.", ephemeral=True)
                 return
 
-            # Add the user to the group
             await self.bot.db.add_group_member(group['id'], user.id)
 
-            # Assign the session role to the new member
             _, session_role_id = await self.bot.db.get_group_roles(group['id'])
             session_role = interaction.guild.get_role(session_role_id)
-
-            role_assigned = False
             if session_role:
-                try:
-                    await user.add_roles(session_role)
-                    role_assigned = True
-                except discord.Forbidden:
-                    logger.warning(f"Bot lacks permission to assign role {session_role.id} to user {user.id}")
-                except Exception as e:
-                    logger.error(f"Error assigning role: {str(e)}")
+                await user.add_roles(session_role)
 
-            # Prepare response message
-            response_message = f"{user.mention} has been invited to the study group '{group_name}'."
-            if not role_assigned:
-                response_message += f"\nWarning: I couldn't assign the group role to {user.mention}. Please manually assign the role '{session_role.name}' if needed."
-
-            # Send confirmation messages
-            await interaction.response.send_message(response_message)
-            
-            try:
-                await user.send(f"You've been invited to join the study group '{group_name}' in {interaction.guild.name}. You've been automatically added to the group.")
-            except discord.Forbidden:
-                logger.warning(f"Unable to send DM to user {user.id}")
-                await interaction.followup.send(f"Note: I couldn't send a DM to {user.mention} to notify them about the invitation.")
-
-            # Log the action
-            logger.info(f"User {interaction.user.id} invited {user.id} to group '{group_name}' (ID: {group['id']})")
-
+            await interaction.followup.send(f"You've successfully invited {user.mention} to the study group '{group_name}'.")
+            await user.send(f"You've been invited to join the study group '{group_name}' in {interaction.guild.name}. You've been automatically added to the group.")
+        except discord.errors.Forbidden:
+            await interaction.followup.send("I don't have permission to assign roles or send DMs. Please check my permissions and try again.", ephemeral=True)
         except Exception as e:
-            logger.error(f"Error in invite_to_group command: {str(e)}", exc_info=True)
-            await interaction.response.send_message("An error occurred while processing your request. Please try again later.", ephemeral=True)
+            await interaction.followup.send(f"{random.choice(ERROR_PHRASES)} (Only you can see this message)", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(StudyGroups(bot))
-    logger.info("StudyGroups cog loaded")
