@@ -149,7 +149,7 @@ class StudyGroup:
                 "group_id": self.group_id,
                 "category_id": self.category_id,
                 "max_members": self.max_members,
-                "member_ids": self.member_ids,
+                ###  "member_ids": self.member_ids,  # List of Member ID, not used in this table anymore, it's store in study_groups_members
                 "creator_id": self.creator_id,
                 "owner_id": self.owner_id,
                 "group_role_id": self.group_role_id,
@@ -690,8 +690,8 @@ class StudyGroup:
                     await self.end_group(delete_text_channel=False)
                     return
 
-                # Wait for 1 minute before checking the conditions again
-                await asyncio.sleep(60)
+                # Wait for 5 minutes before checking the conditions again
+                await asyncio.sleep(300)
 
         except asyncio.CancelledError:
             logger.info(f"End condition check for group '{self.name}' was cancelled.")
@@ -813,47 +813,48 @@ class StudyGroup:
 
 
 
-    class VCFunctions:
-        def __init__(self, study_group):
-            self.study_group = study_group
-            self.speak_enabled = True  # Track whether speaking is enabled in the VC
-            self.video_mode = "on"  # "on", "off", or "force"
-            self.video_timer = 10  # Timer for forcing video to be on, default to 10 seconds
+    
+    # class VCFunctions:
+    #     def __init__(self, study_group):
+    #         self.study_group = study_group
+    #         self.speak_enabled = True  # Track whether speaking is enabled in the VC
+    #         self.video_mode = "on"  # "on", "off", or "force"
+    #         self.video_timer = 10  # Timer for forcing video to be on, default to 10 seconds
 
-        def create_vc(self, guild):
-            """Create a voice channel for the group and return its ID."""
-            # Pseudocode to create a voice channel
-            vc_id = 67890  # Placeholder for the created voice channel ID
-            return vc_id
+    #     def create_vc(self, guild):
+    #         """Create a voice channel for the group and return its ID."""
+    #         # Pseudocode to create a voice channel
+    #         vc_id = 67890  # Placeholder for the created voice channel ID
+    #         return vc_id
 
-        def delete_vc(self, guild):
-            """Delete the voice channel when the group ends."""
-            # Pseudocode to delete the voice channel
-            pass
+    #     def delete_vc(self, guild):
+    #         """Delete the voice channel when the group ends."""
+    #         # Pseudocode to delete the voice channel
+    #         pass
 
-        def update_vc_permissions(self, guild):
-            """Update permissions for the group's voice channel."""
-            # Pseudocode to update VC permissions for the group role
-            pass
+    #     def update_vc_permissions(self, guild):
+    #         """Update permissions for the group's voice channel."""
+    #         # Pseudocode to update VC permissions for the group role
+    #         pass
 
-        def set_speak(self, enable):
-            """Enable or disable speaking in the VC."""
-            self.speak_enabled = enable
-            # Update the permissions in the VC to enable/disable speaking
-            pass
+    #     def set_speak(self, enable):
+    #         """Enable or disable speaking in the VC."""
+    #         self.speak_enabled = enable
+    #         # Update the permissions in the VC to enable/disable speaking
+    #         pass
 
-        def set_video(self, mode):
-            """Set video mode in the VC ('on', 'off', or 'force')."""
-            if mode in ["on", "off", "force"]:
-                self.video_mode = mode
-                # Apply video permissions in the VC based on this mode
-            else:
-                raise ValueError("Invalid video mode")
+    #     def set_video(self, mode):
+    #         """Set video mode in the VC ('on', 'off', or 'force')."""
+    #         if mode in ["on", "off", "force"]:
+    #             self.video_mode = mode
+    #             # Apply video permissions in the VC based on this mode
+    #         else:
+    #             raise ValueError("Invalid video mode")
 
-        def force_video_timer(self, user_id):
-            """Warn user to turn on video, and kick them out if they fail to do so in time."""
-            # Pseudocode for tracking time and kicking user if video is not turned on
-            pass
+    #     def force_video_timer(self, user_id):
+    #         """Warn user to turn on video, and kick them out if they fail to do so in time."""
+    #         # Pseudocode for tracking time and kicking user if video is not turned on
+    #         pass
 
 
 

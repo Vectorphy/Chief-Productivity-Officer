@@ -272,7 +272,6 @@ class DBHandler:
             fields_to_update.append("info_embed_id = ?")
             values.append(study_group_data["info_embed_id"])
 
-
         if "vc_id" in study_group_data:
             fields_to_update.append("vc_id = ?")
             values.append(study_group_data["vc_id"])
