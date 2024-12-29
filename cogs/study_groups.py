@@ -600,7 +600,7 @@ class StudyGroup:
         try:
             extra_time : int = 3600  # Example: Extend by 1 hour
             self.duration += extra_time
-            self.end_time : float = (datetime(self.end_time) + timedelta(seconds=extra_time)).timestamp
+            self.end_time = (datetime.fromtimestamp(self.end_time) + timedelta(seconds=extra_time)).timestamp()
             # Update in the database (DBHandler function)
             await self.db.update_study_group_by_id({
                 "group_id": self.group_id,

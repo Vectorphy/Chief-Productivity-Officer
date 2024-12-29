@@ -34,11 +34,28 @@ class CPO(commands.Bot):
             if filename.endswith(".py") and not filename.startswith("_"):
                 try:
                     await self.load_extension(f"cogs.{filename[:-3]}")
+                    
                     logger.info(f"Loaded extension: {filename[:-3]}")
                 except Exception as e:
                     logger.error(f"Failed to load extension {filename[:-3]}: {e}")
-        await self.tree.sync()
+        await self.sync_commands()
         logger.info("CPO setup completed.")
+    
+    async def sync_commands(self):
+        try:
+            # Sync global commands
+            await self.tree.sync()
+            logger.info("Global commands synced.")
+        except Exception as e:
+            logger.error(f"Failed to sync global commands: {e}")
+
+        # Sync guild-specific commands if any
+        for guild in self.guilds:
+            try:
+                await self.tree.sync(guild=guild)
+                logger.info(f"Commands synced for guild: {guild.name} ({guild.id})")
+            except Exception as e:
+                logger.error(f"Failed to sync commands for guild {guild.name} ({guild.id}): {e}")
 
     async def on_ready(self):
         logger.info(f'{self.user} has connected to Discord!')
