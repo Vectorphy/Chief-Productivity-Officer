@@ -16,7 +16,7 @@ Chief Productivity Officer (CPO) is a Discord bot designed to enhance productivi
 
 1. Clone the repository:
     ```bash
-    git clone https://github.com/Vectorphy/CPO.git
+    git clone https://github.com/Vectorphy/Chief-Productivity-Officer.git
     cd CPO
     ```
 
