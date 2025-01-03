@@ -16,11 +16,11 @@ The following slash commands are available for managing Pomodoro sessions:
 
 **Parameters:**
 
-| Parameter | Data Type | Required/Optional | Description | Example
+| Parameter | Data Type | Required/Optional | Description | Example |
 |--|--|--|--|--|
-| `focus` | `int` | Optional (defaults to 25) | The duration of the focus period in minutes. | `30`
-| `short_break` | `int` | Optional (defaults to 5) | The duration of the short break period in minutes. | `10`
-| `long_break` | `int` | Optional (defaults to 15) | The duration of the long break period in minutes. | `20`
+| `focus` | `int` | Optional (defaults to 25) | The duration of the focus period in minutes. | `30` |
+| `short_break` | `int` | Optional (defaults to 5) | The duration of the short break period in minutes. | `10` |
+| `long_break` | `int` | Optional (defaults to 15) | The duration of the long break period in minutes. | `20` |
 
 **Error Handling:**
 

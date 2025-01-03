@@ -1,27 +1,28 @@
 Term, Definition
-Study Group, A group of users who are studying together, typically using the bot's features to create dedicated channels, assign roles, and manage study sessions.
-Cog, A modular unit of code in Pycord that provides a specific set of features for the bot. Examples include the `study_groups` cog, the `checkin` cog, and the `pomodoro` cog.
-Check-in, A process for tracking member participation during study sessions. The bot sends periodic reminders, and members can mark themselves as present or absent.
-Pomodoro Timer, A time management technique that uses intervals of focused work (typically 25 minutes) and short breaks (typically 5 minutes). The bot provides a Pomodoro timer command to help users follow this technique.
-Task List, A list of tasks that a user wants to complete. The bot allows users to create, manage, and mark tasks as complete.
-Manager, A Discord user with elevated permissions to manage bot settings and features, such as adding or removing other managers, configuring guild settings, and accessing administrative commands.
-MongoDB, A NoSQL database used to store persistent data for the bot, such as study group information, check-in sessions, task lists, and user settings.
-Motor, The officially supported asynchronous MongoDB driver for Python. The bot uses Motor to interact with the MongoDB database without blocking the event loop.
-Pycord, A modern, feature-rich, and actively maintained Python library for Discord bot development. The bot is built using Pycord.
-Slash Command, A type of Discord command that users can invoke by typing a forward slash `/` followed by the command name. The bot primarily uses slash commands for user interaction.
-Guild, A Discord server.
-Category, A grouping of channels within a Discord guild. Study groups can create dedicated categories for their text and voice channels.
-Role, A way to group members within a Discord guild and assign them specific permissions. Study groups can assign roles to their members.
-Voice Channel, A channel within a Discord guild where users can communicate using voice. Study groups can create dedicated voice channels for their study sessions.
-Text Channel, A channel within a Discord guild where users can communicate using text messages. Study groups can create dedicated text channels for their discussions and announcements.
-Embed, A rich message format in Discord that can include images, links, and formatted text. The bot uses embeds to display information about study groups, check-in sessions, and other data.
-Environment Variable, A variable that stores configuration information outside of the bot's code. The bot uses environment variables to store sensitive information like API keys and database credentials.
-Welcome Message, A message that is automatically sent to new members when they join the server.
-Help Command, A command that provides users with information about the bot's commands and how to use them.
-Time Zone, A region of the globe that observes a uniform standard time for legal, commercial, and social purposes. The bot uses a specific time zone for scheduling and reminders.
-User Feedback, Information provided by users about their experience with the bot, including suggestions, bug reports, and general comments.
-Bug Report, A report of a problem or error in the bot's functionality.
-Feature Suggestion, A suggestion for a new feature or improvement to the bot.
-Archive, A place where inactive study groups are stored.
-Database Backup, A copy of the bot's database that is created periodically to protect against data loss.
-Performance Monitoring, The process of tracking the bot's performance and resource usage to identify potential bottlenecks and optimize efficiency.
+Study Group, "A group of users who are studying together, typically using the bot's features to create dedicated channels, assign roles, and manage study sessions."
+Cog, "A modular unit of code in Pycord that provides a specific set of features for the bot. Examples include the `study_groups` cog, the `checkin` cog, and the `pomodoro` cog."
+Check-in, "A process for tracking member participation during study sessions. The bot sends periodic reminders, and members can mark themselves as present or absent."
+Pomodoro Timer, "A time management technique that uses intervals of focused work (typically 25 minutes) and short breaks (typically 5 minutes). The bot provides a Pomodoro timer command to help users follow this technique."
+Task List, "A list of tasks that a user wants to complete. The bot allows users to create, manage, and mark tasks as complete."
+Manager, "A Discord user with elevated permissions to manage bot settings and features, such as adding or removing other managers, configuring guild settings, and accessing administrative commands."
+MongoDB, "A NoSQL database used to store persistent data for the bot, such as study group information, check-in sessions, task lists, and user settings."
+Motor, "The officially supported asynchronous MongoDB driver for Python. The bot uses Motor to interact with the MongoDB database without blocking the event loop."
+Pycord, "A modern, feature-rich, and actively maintained Python library for Discord bot development. The bot is built using Pycord."
+Slash Command, "A type of Discord command that users can invoke by typing a forward slash `/` followed by the command name. The bot primarily uses slash commands for user interaction."
+Guild, "A Discord server."
+Category, "A grouping of channels within a Discord guild. Study groups can create dedicated categories for their text and voice channels."
+Role, "A way to group members within a Discord guild and assign them specific permissions. Study groups can assign roles to their members."
+Voice Channel, "A channel within a Discord guild where users can communicate using voice. Study groups can create dedicated voice channels for their study sessions."
+Text Channel, "A channel within a Discord guild where users can communicate using text messages. Study groups can create dedicated text channels for their discussions and announcements."
+Embed, "A rich message format in Discord that can include images, links, and formatted text. The bot uses embeds to display information about study groups, check-in sessions, and other data."
+Environment Variable, "A variable that stores configuration information outside of the bot's code. The bot uses environment variables to store sensitive information like API keys and database credentials."
+Welcome Message, "A message that is automatically sent to new members when they join the server."
+Help Command, "A command that provides users with information about the bot's commands and how to use them."
+Time Zone, "A region of the globe that observes a uniform standard time for legal, commercial, and social purposes. The bot uses a specific time zone for scheduling and reminders."
+User Feedback, "Information provided by users about their experience with the bot, including suggestions, bug reports, and general comments."
+Bug Report, "A report of a problem or error in the bot's functionality."
+Feature Suggestion, "A suggestion for a new feature or improvement to the bot."
+Archive, "A place where inactive study groups are stored."
+Database Backup, "A copy of the bot's database that is created periodically to protect against data loss."
+Performance Monitoring, "The process of tracking the bot's performance and resource usage to identify potential bottlenecks and optimize efficiency."
+

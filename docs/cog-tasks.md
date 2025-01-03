@@ -1,10 +1,10 @@
-# Task List Cog
+# Tasks Cog
 
-This document describes the functionality of the  `tasklist`  cog, which allows users to create and manage personal task lists within the [Bot Name] Discord bot.
+This document describes the functionality of the  `tasks`  cog, which allows users to create and manage personal task lists within the [Bot Name] Discord bot.
 
 ## Overview
 
-The  `tasklist`  cog provides commands for adding tasks, marking tasks as complete, and viewing a list of current tasks. This helps users stay organized and track their progress on individual tasks, promoting productivity and a sense of accomplishment.
+The  `tasks`  cog provides commands for adding tasks, marking tasks as complete, and viewing a list of current tasks. This helps users stay organized and track their progress on individual tasks, promoting productivity and a sense of accomplishment.
 
 ## Commands
 
@@ -14,25 +14,9 @@ The  `tasklist`  cog provides commands for adding tasks, marking tasks as comple
 
 **Parameters:**
 
-Parameter
-
-Data Type
-
-Required/Optional
-
-Description
-
-Example
-
-`description`
-
-`string`
-
-Required
-
-The description of the task.
-
-`Finish reading Chapter 3`
+| Parameter | Data Type | Required/Optional | Description | Example |
+|--|--|--|--|--|
+| `description` | `string` | Required | The description of the task. | `Finish reading Chapter 3` |
 
 **Error Handling:**
 
@@ -50,25 +34,9 @@ The description of the task.
 
 **Parameters:**
 
-Parameter
-
-Data Type
-
-Required/Optional
-
-Description
-
-Example
-
-`task_id`
-
-`int`
-
-Required
-
-The ID of the task to mark as complete.
-
-`1`
+| Parameter | Data Type | Required/Optional | Description | Example |
+|--|--|--|--|--|
+| `task_id` | `int` | Required | The ID of the task to mark as complete. | `1` |
 
 **Error Handling:**
 
@@ -93,14 +61,14 @@ The ID of the task to mark as complete.
 
 ## Event Listeners
 
-The  `tasklist`  cog does not currently use any event listeners. However, you could consider adding event listeners for events like:
+The  `tasks`  cog does not currently use any event listeners. However, you could consider adding event listeners for events like:
 
 -   `on_member_join`: To automatically create a task list for new members joining the server.
 -   `on_raw_reaction_add`: To allow users to mark tasks as complete by reacting to them in the task list embed.
 
 ## Internal Logic
 
-The  `tasklist`  cog uses the  `database.py`  module to store and retrieve task list information. It interacts with the  `tasks`  collection in the database, which stores the following information for each task:
+The  `tasks`  cog uses the  `database.py`  module to store and retrieve task list information. It interacts with the  `tasks`  collection in the database, which stores the following information for each task:
 
 -   `user_id`: The ID of the Discord user who created the task.
 -   `description`: The description of the task.
@@ -114,7 +82,7 @@ The  `tasklist`  cog uses the  `database.py`  module to store and retrieve task 
 
 ## Interaction with Other Cogs
 
-The  `tasklist`  cog currently does not interact with other cogs. However, you could consider integrating it with other features, such as:
+The  `tasks`  cog currently does not interact with other cogs. However, you could consider integrating it with other features, such as:
 
 -   **`study_groups`:**
     -   Allow users to create and manage shared task lists within study groups. This would enable collaborative task management and enhance group productivity.
@@ -136,10 +104,10 @@ The  `tasklist`  cog currently does not interact with other cogs. However, you c
 -   **Subtasks:**  Enable users to break down large tasks into smaller subtasks, providing a more granular approach to task management.
 -   **Collaborative Task Editing:**  For shared task lists, allow multiple users to edit and update tasks.
 
-By implementing these enhancements, you can transform the  `tasklist`  cog into a powerful and versatile task management tool within your Discord bot.
+By implementing these enhancements, you can transform the  `tasks`  cog into a powerful and versatile task management tool within your Discord bot.
 
 ## Documentation Updates
 
 -   **Project Overview:**  Update the Project Overview document to include a more detailed description of the task list feature and its potential future enhancements.
 -   **API Documentation:**  If you plan to expose APIs for managing task lists, update the API documentation to include the relevant endpoints and methods.
--   **Cog-Specific Documentation:**  Update the documentation for other cogs that might interact with the  `tasklist`  cog, such as  `study_groups`  and  `pomodoro`.
+-   **Cog-Specific Documentation:**  Update the documentation for other cogs that might interact with the  `tasks`  cog, such as  `study_groups`  and  `pomodoro`.

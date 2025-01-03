@@ -71,7 +71,6 @@ The  `permissions`  cog is used by all other cogs that require permission checks
 
 -   **Role-Based Permissions:**  Implement a system for assigning permissions to roles, allowing for easier management of permissions for groups of users.
 -   **Permission Hierarchy:**  Define a hierarchy of permissions, where higher-level permissions automatically grant lower-level permissions.
--   **External Authentication:**  Integrate with external authentication systems, such as OAuth 2.0, to allow users to manage their permissions through other platforms.
 -   **User-Facing Commands:**  Consider adding user-facing commands to allow users to view their own permissions or request specific permissions.
 
 ## Documentation Updates

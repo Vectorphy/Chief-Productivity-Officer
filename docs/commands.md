@@ -100,6 +100,4 @@
 
 Note: All commands use slash command syntax (/).
 
-
-
 ---

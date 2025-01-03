@@ -14,7 +14,7 @@ The  `voice_channels`  cog automates the creation and deletion of voice channels
 
 **Parameters:**
 
-Parameter | Data Type | Required/Optional | Description | Example
+Parameter | Data Type | Required/Optional | Description | Example |
 |--|--|--|--|--|
 | `name` | `string` | Optional | The name of the voice channel. If not provided, the channel will be named "[Study Group Name] VC". | `My Study Group Voice` |
 
