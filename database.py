@@ -2,6 +2,7 @@ import sqlite3
 import asyncio
 from datetime import datetime
 import logging
+import json
 from typing import List, Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -168,6 +169,28 @@ class DBHandler:
             )
             ''')
             logger.info("Created 'checkin_members' table.")
+
+            ## CHECKIN GUILD SETTINGS TABLE
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS checkin_guild_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL UNIQUE,
+                max_members INTEGER,
+                min_duration INTEGER,
+                max_duration INTEGER,
+                max_absences INTEGER,
+                max_breaks INTEGER,
+                max_user_sessions INTEGER,
+                perms_mode TEXT DEFAULT 'ALLOW',
+                whitelist_users TEXT,
+                blacklist_users TEXT,
+                whitelist_channels TEXT,
+                blacklist_channels TEXT,
+                whitelist_roles TEXT,
+                blacklist_roles TEXT
+            )
+            ''')
+            logger.info("Created 'checkin_guild_settings' table.")
 
             self.conn.commit()
             logger.info("Database tables created or verified.")
@@ -585,9 +608,101 @@ class DBHandler:
             logger.info(f"Deleted check-in session with ID: {session_id}.")
 
 
+    ## Add or Update Check-in Guild Settings
+    async def add_or_update_checkin_guild_settings(self, guild_id: int, settings: Dict[str, Any]) -> None:
+        """
+        Add or update check-in guild settings in the database.
+        """
+        async with self.lock:
+            cursor = self.conn.cursor()
+            update_fields = []
+            update_values = []
+
+            # Dynamically build the query based on which fields are in settings
+            if "max_members" in settings:
+                update_fields.append("max_members = ?")
+                update_values.append(settings["max_members"])
+
+            if "min_duration" in settings:
+                update_fields.append("min_duration = ?")
+                update_values.append(settings["min_duration"])
+            
+            if "max_duration" in settings:
+                update_fields.append("max_duration = ?")
+                update_values.append(settings["max_duration"])
+
+            if "max_absences" in settings:
+                update_fields.append("max_absences = ?")
+                update_values.append(settings["max_absences"])
+            
+            if "max_breaks" in settings:
+                update_fields.append("max_breaks = ?")
+                update_values.append(settings["max_breaks"])
+
+            if "max_user_sessions" in settings:
+                update_fields.append("max_user_sessions = ?")
+                update_values.append(settings["max_user_sessions"])
+            
+            if "perms_mode" in settings:
+                update_fields.append("perms_mode = ?")
+                update_values.append(settings["perms_mode"])
+            
+            if "whitelist_users" in settings:
+                update_fields.append("whitelist_users = ?")
+                update_values.append(settings["whitelist_users"])
+            
+            if "blacklist_users" in settings:
+                update_fields.append("blacklist_users = ?")
+                update_values.append(settings["blacklist_users"])
+            
+            if "whitelist_channels" in settings:
+                update_fields.append("whitelist_channels = ?")
+                update_values.append(settings["whitelist_channels"])
+            
+            if "blacklist_channels" in settings:
+                update_fields.append("blacklist_channels = ?")
+                update_values.append(settings["blacklist_channels"])
+            
+            if "whitelist_roles" in settings:
+                update_fields.append("whitelist_roles = ?")
+                update_values.append(settings["whitelist_roles"])
+            
+            if "blacklist_roles" in settings:
+                update_fields.append("blacklist_roles = ?")
+                update_values.append(settings["blacklist_roles"])
+            
+            # Ensure that we're updating only the necessary fields
+            if update_fields:
+                update_values.append(guild_id)  # Add guild_id for the WHERE clause
+                query = f"UPDATE checkin_guild_settings SET {', '.join(update_fields)} WHERE guild_id = ?"
+                cursor.execute(query, update_values)
+                self.conn.commit()
+                logger.info(f"Settings updated for the guild {guild_id}: {settings}")
+
+
+    ## Fetch Checkin Guild Settings
+    async def fetch_checkin_guild_settings(self, guild_id: int) -> Dict[str, Any]:
+        """
+        Fetch check-in settings for a guild. If none exists, return default settings.
+        """
+        async with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT * FROM checkin_guild_settings WHERE guild_id = ?", (guild_id))
+            row = cursor.fetchone()
+
+            if row:
+                settings = {key: json.loads(row[key]) if key.startswith("whitelist") or key.startswith("blacklist") else row[key]
+                            for key in row.keys()}
+                logger.info(f"The settings for the guild {guild_id} are:{settings}")
+                return settings
+            else:
+                default_settings = {}
+                logger.info(f"No settings found for guild {guild_id}. Returning empty settings.")
+                return default_settings
 
 
 
+########################################################################################
 
 
 

@@ -6,7 +6,7 @@ from datetime import datetime
 import time
 import logging
 import sys
-from typing import List, Optional
+from typing import List, Optional, Union
 
 logger = logging.getLogger(__name__)
 

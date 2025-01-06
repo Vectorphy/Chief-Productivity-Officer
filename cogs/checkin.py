@@ -9,7 +9,7 @@ import random
 import uuid
 import sys
 from discord.ui import Button, View, Select
-from typing import List, Dict, Optional
+from typing import List, Dict, Any, Optional, Union
 from database import DBHandler
 from enum import Enum
 from .manager import Manager
@@ -35,113 +35,27 @@ class MemberStatusKey(Enum):
     STATUS = "status"
     ABSENCES = "absences"
 
+# Enum regularize the permission modes
+class PermissionMode(Enum):
+    ALLOW = "ALLOW"
+    DENY = "DENY"
 
 
-### CHECKIN SETTINGS CLASS
-class CheckinGuildSettings:
-    def __init__(self, interaction : discord.Interaction, max_members = 10, min_duration = 20, max_duration = 7200, max_absences = 3, max_breaks = 3, max_user_sessions = 5, permission_mode = "ALLOW"):
-        self.guild = interaction.guild
-        self.guild_id = interaction.guild.id
-        # Initialize all settings for the guild here
-        self.max_members = max_members
-        self.min_duration = min_duration
-        self.max_duration = max_duration
-        self.max_absences = max_absences
-        self.max_breaks = max_breaks
-        self.max_user_sessions = max_user_sessions
-
-        # Permissions-related settings
-        self.permission_mode = permission_mode
-        self.whitelist_users: List[int] = []
-        self.blacklist_users: List[int] = []
-        self.whitelist_channels: List[int] = []
-        self.blacklist_channels: List[int] = []
-        self.whitelist_roles: List[int] = []
-        self.blacklist_roles: List[int] = []
-
-    def has_permission(self, user_id: int, channel_id: int, role_ids: List[int]) -> bool:
-        """Checks if a user has permission based on the guild's settings."""
-        logger.info(f"Checking permissions for user {user_id} in channel {channel_id} in guild {self.guild_id}...")
-
-        if self.permission_mode == "ALLOW":
-            if user_id in self.blacklist_users or channel_id in self.blacklist_channels:
-                return False
-            if self.whitelist_users and user_id not in self.whitelist_users:
-                return False
-            if self.whitelist_channels and channel_id not in self.whitelist_channels:
-                return False
-            if self.whitelist_roles:
-                if not set(role_ids).intersection(self.whitelist_roles):
-                    return False
-        else:
-            if user_id in self.whitelist_users or channel_id in self.whitelist_channels:
-                return True
-            if self.blacklist_users and user_id in self.blacklist_users:
-                return False
-            if self.blacklist_channels and channel_id in self.blacklist_channels:
-                return False
-            if self.blacklist_roles:
-                if set(role_ids).intersection(self.blacklist_roles):
-                    return False
-        return True
-
-    ### --- DECORATORS --- ###
-    
-    ## Check - Member
-    def is_member(func):
-        """Decorator to check if a user is a member of the session."""
-        @wraps(func)
-        async def wrapper(session : 'CheckinSession', interaction: discord.Interaction, *args, **kwargs):
-            if interaction.user.id not in session.member_ids:
-                await interaction.response.send_message("You are not a member of this session.", ephemeral=True)
-                return
-            return await func(session, interaction, *args, **kwargs)
-        return wrapper
-
-    ## Check - Owner
-    def is_owner(func):
-        """Decorator to check if a user is the owner of the session."""
-        @wraps(func)
-        async def wrapper(session : 'CheckinSession', interaction: discord.Interaction, *args, **kwargs):
-            if interaction.user.id != session.owner_id:
-                await interaction.response.send_message("You are not the owner of this session.", ephemeral=True)
-                return
-            return await func(session, interaction, *args, **kwargs)
-        return wrapper
-    
-    # Check - /checkin Command Permissions
-    def checkin_command_permissions(func):
-        """Decorator to check permissions for the `/checkin` command."""
-        @wraps(func)
-        async def wrapper(cog : 'CheckinCog', interaction: discord.Interaction, *args, **kwargs):
-            guild_settings : CheckinGuildSettings = cog.guild_settings[interaction.guild.id] if cog.guild_settings else None
-            role_ids = [role.id for role in interaction.user.roles]
-            if not guild_settings or not guild_settings.has_permission(interaction.user.id, interaction.channel.id, role_ids):
-                await interaction.response.send_message("You don't have permission to use this command here.", ephemeral=True)
-                return
-            return await func(cog, interaction, *args, **kwargs)
-        return wrapper
-    
-    ## Check - Max User Groups
-    def check_user_groups(func):
-        """Decorator to check if a user is within the limit of allowed sessions/groups."""
-        @wraps(func)
-        async def wrapper(cog : 'CheckinCog', interaction: discord.Interaction, *args, **kwargs):
-
-            guild_settings : CheckinGuildSettings = cog.guild_settings[interaction.guild.id] if cog.guild_settings else None
-            if guild_settings:
-                user_sessions_count = sum(interaction.user.id in session.member_ids for session in cog.active_sessions.values())
-                if user_sessions_count >= guild_settings.max_user_sessions:
-                    await interaction.response.send_message("You've reached the limit for active sessions you can join.", ephemeral=True)
-                    return
-            return await func(cog, interaction, *args, **kwargs)
-        return wrapper
- 
-
-
-
-
-
+# Class for default values
+class DefaultValues:
+    MAX_MEMBERS = 10
+    MIN_DURATION = 20
+    MAX_DURATION = 7200
+    MAX_ABSENCES = 3
+    MAX_BREAKS = 3
+    MAX_USER_SESSIONS = 10
+    PERMS_MODE = PermissionMode.ALLOW.value
+    WHITELIST_USERS = []
+    BLACKLIST_USERS = []
+    WHITELIST_CHANNELS = []
+    BLACKLIST_CHANNELS = []
+    WHITELIST_ROLES = []
+    BLACKLIST_ROLES = []
 
 class CheckinSession:
     # It's in class
@@ -157,29 +71,42 @@ class CheckinSession:
             "Any progress to report?"
         ]
 
-    def __init__(self, db : DBHandler, cog : 'CheckinCog', interaction : discord.Interaction, name : str, member_ids: List[int], duration : int, settings: CheckinGuildSettings):
+    def __init__(self, db : DBHandler, cog : 'CheckinCog', interaction : discord.Interaction, name : str, member_ids: List[int], duration : int):
 
-        # Critical Info first
-        self.guild_id : int = interaction.guild.id
-        self.name : str = name
-        self.session_id : str = self.generate_session_id()
-        self.creator_id : int = interaction.user.id
-        self.owner_id : int = self.creator_id
-        self.text_id : int = interaction.channel.id
+        # Critical Info first - passed by the user
+        self.guild_id : int = interaction.guild.id          
+        self.name : str = name                               
+        self.session_id : str = self.generate_session_id()  
+        self.creator_id : int = interaction.user.id         
+        self.owner_id : int = self.creator_id               
+        self.text_id : int = interaction.channel.id         
         self.member_ids : List[int] = member_ids
-        
         self.duration : int = duration
+
+        # This info is calculated at the start of the session
         self.start_time : float = datetime.now().timestamp()
         self.last_reminder_time : float = datetime.now().timestamp()
         self.next_reminder_time : float = (datetime.now() + timedelta(seconds=duration)).timestamp()
         self.last_reminder_message_id : int = None
         self.reminder_count : int = 0
-
         self.member_statuses = {member_id : {MemberStatusKey.STATUS.value : MemberStatus.PRESENT.value, MemberStatusKey.ABSENCES.value : 0} for member_id in self.member_ids}
                 
-        self.max_members = settings.max_members
-        self.max_absences = settings.max_absences
-        self.max_breaks = settings.max_breaks
+        # Guild Level Settings
+        self.max_members : int = DefaultValues.MAX_MEMBERS                      # Default 10
+        self.min_duration : int = DefaultValues.MIN_DURATION                    # Default 20s
+        self.max_duration : int = DefaultValues.MAX_DURATION                    # Default 7200s
+        self.max_absences : int = DefaultValues.MAX_ABSENCES                    # Default 3 absences
+        self.max_breaks : int = DefaultValues.MAX_BREAKS                        # Default 3 breaks
+        self.max_user_sessions : int = DefaultValues.MAX_USER_SESSIONS          # Default 10 members
+        # Guild Level Permission Settings
+        self.perms_mode : str = DefaultValues.PERMS_MODE                        # Default 'ALLOW'
+        self.whitelist_users : List[int] = DefaultValues.WHITELIST_USERS        # Default []
+        self.blacklist_users : List[int] = DefaultValues.BLACKLIST_USERS        # Default []
+        self.whitelist_channels : List[int] = DefaultValues.WHITELIST_CHANNELS  # Default []
+        self.blacklist_channels : List[int] = DefaultValues.BLACKLIST_CHANNELS  # Default []
+        self.whitelist_roles : List[int] = DefaultValues.WHITELIST_ROLES        # Default [] 
+        self.blacklist_roles : List[int] = DefaultValues.BLACKLIST_ROLES        # Default []
+
         
         # Other stuff, not stored in Database
         self.cog : CheckinCog = cog
@@ -548,7 +475,7 @@ class CheckinSession:
     
 
     ## Button Function - Mark Present
-    @CheckinGuildSettings.is_member
+    @Manager.is_member
     async def mark_present_callback(self, interaction: discord.Interaction):
         try:
             await interaction.response.defer()
@@ -586,7 +513,7 @@ class CheckinSession:
 
 
     ## Button Function - Start Break
-    @CheckinGuildSettings.is_member
+    @Manager.is_member
     async def start_break_callback(self, interaction : discord.Interaction):
         try:
             await interaction.response.defer()
@@ -659,7 +586,7 @@ class CheckinSession:
 
 
     ## Button Function - Leave Session
-    @CheckinGuildSettings.is_member
+    @Manager.is_member
     async def leave_session_callback(self, interaction : discord.Interaction):
         # Remove user from the session and update absent and members lists
         try:
@@ -691,7 +618,7 @@ class CheckinSession:
         
 
     ## Button Function - Change Owner
-    @CheckinGuildSettings.is_owner
+    @Manager.is_owner
     async def change_owner_callback(self, interaction: discord.Interaction):
         try:
             await interaction.response.defer()
@@ -753,7 +680,7 @@ class CheckinSession:
 
 
     ## Button Function - End Session
-    @CheckinGuildSettings.is_owner
+    @Manager.is_owner
     async def end_session_callback(self, interaction: discord.Interaction):
         try:
             await interaction.response.defer()
@@ -830,7 +757,6 @@ class CheckinCog(commands.Cog):
         self.bot = bot
         self.db : DBHandler = bot.db
         self.active_sessions = {}
-        self.guild_settings = {}
         logger.debug("Check-in Cog initialized.")
 
         bot.loop.create_task(self.load_active_sessions_from_db())
@@ -860,17 +786,24 @@ class CheckinCog(commands.Cog):
                     }
                     for member in member_statuses
                 }
-
-                guild_id = session_data["guild_id"]
-                if guild_id not in self.guild_settings:
-                    guild : discord.Guild = await self.bot.fetch_guild(guild_id)
-                    if guild is None:
-                        logger.warning(f"Guild with ID {guild_id} could not be fetched. Proceeding with default settings.")
-                        # initialise with default settings without a guild object
-                        self.guild_settings[guild_id] = CheckinGuildSettings(None)
-                    else:
-                        self.guild_settings[guild_id] = CheckinGuildSettings(None)
-                this_guild_settings = self.guild_settings[guild_id]
+                
+                # Add Guild level settings to Session
+                guild_settings = await self.db.fetch_checkin_guild_settings(session_data["guild_id"])
+                session_data.update({
+                    "max_members": guild_settings["max_members"],
+                    "min_duration": guild_settings["min_duration"],
+                    "max_duration": guild_settings["max_duration"],
+                    "max_absences": guild_settings["max_absences"],
+                    "max_breaks": guild_settings["max_breaks"],
+                    "max_user_sessions": guild_settings["max_user_sessions"],
+                    "perms_mode": guild_settings["perms_mode"],
+                    "whitelist_users": guild_settings["whitelist_users"],
+                    "blacklist_users": guild_settings["blacklist_users"],
+                    "whitelist_channels": guild_settings["whitelist_channels"],
+                    "blacklist_channels": guild_settings["blacklist_channels"],
+                    "whitelist_roles": guild_settings["whitelist_roles"],
+                    "blacklist_roles": guild_settings["blacklist_roles"]
+                })
 
                 # Create a new CheckinSession object
                 session = CheckinSession(
@@ -879,8 +812,7 @@ class CheckinCog(commands.Cog):
                     interaction=None,  # Interaction is not available during bot restart
                     name=session_data["name"],
                     member_ids=[m['member_id'] for m in member_statuses],
-                    duration=session_data["duration"],
-                    settings=this_guild_settings
+                    duration=session_data["duration"]
                 )
 
                 # Set session attributes
@@ -888,13 +820,32 @@ class CheckinCog(commands.Cog):
                 session.guild_id = session_data["guild_id"]
                 session.creator_id = session_data["creator_id"]
                 session.owner_id = session_data["owner_id"]
-                session.text_id = session_data["text_channel_id"]
+                session.text_id = session_data["text_id"]
+
+                # The times are converted back into float as they were stored as int/text in the db.
                 session.start_time = float(session_data["start_time"])
-                session.reminder_count = session_data["reminder_count"]
+                # What if the last reminder time and the next reminder time have elapsed when the bot restarts?
                 session.last_reminder_time = float(session_data["last_reminder_time"])
                 session.next_reminder_time = float(session_data["next_reminder_time"])
+                # What if the reminder message is deleted? If that happens, we need to send a new message.
+                session.last_reminder_message_id = session_data["last_reminder_message_id"]
+                session.reminder_count = session_data["reminder_count"]
                 session.member_statuses = member_status_dict
 
+                session.max_members = session_data["max_members"]
+                session.min_duration = session_data["min_duration"]
+                session.max_duration = session_data["max_duration"]
+                session.max_absences = session_data["max_absences"]
+                session.max_breaks = session_data["max_breaks"]
+                session.max_user_sessions = session_data["max_user_sessions"]
+                session.perms_mode = session_data["perms_mode"]
+                session.whitelist_users = session_data["whitelist_users"]
+                session.blacklist_users = session_data["blacklist_users"]
+                session.whitelist_channels = session_data["whitelist_channels"]
+                session.blacklist_channels = session_data["blacklist_channels"]
+                session.whitelist_roles = session_data["whitelist_roles"]
+                session.blacklist_roles = session_data["blacklist_roles"]
+                
                 # Add the session to active_sessions and start reminder loop
                 self.active_sessions[session.session_id] = session
 
@@ -918,25 +869,48 @@ class CheckinCog(commands.Cog):
     ## Command - /checkin
     @app_commands.command(name='checkin', description='Starts a check-in session with specified duration and mentions. This is the true version.')
     @app_commands.describe(name= 'Name of the Checkin Session', duration='The duration of the check-in session in format \'2d 14h 25m 30s\'', mentions='The users/roles to be included in the check-in session.')
-    @CheckinGuildSettings.check_user_groups
-    @CheckinGuildSettings.checkin_command_permissions
-    async def start_checkin(self, interaction : discord.Interaction, name: str, mentions: str, duration: str):
+    @Manager.check_user_groups
+    # @CheckinGuildSettings.checkin_command_permissions
+    async def start_checkin(self, interaction : discord.Interaction, name: str, mentions: List[Union[discord.Member, discord.Role]], duration: str):
         await interaction.response.defer()
         # Parse the duration and mentions
 
-        duration_seconds = parse_duration(duration)
+        duration_seconds : int = parse_duration(duration)
         member_ids : List[discord.Member] = parse_mentions(interaction, mentions)
 
-        if interaction.guild.id not in self.guild_settings:
-            self.guild_settings[interaction.guild.id] = CheckinGuildSettings(interaction)
-
+        # Fetches the guild settings from the db
+        settings : Dict[str, Any] = self.db.fetch_checkin_guild_settings(interaction.guild.id)
+        # If settings are not found, the func returns an empty array
+        # Later on we can set logic to ask the admin/mods to set up the settings
+        if not settings:
+            logger.info(f"Check-in settings not found for guild {interaction.guild.id}. So using default values")
+            # await interaction.followup.send("Check-in settings not found for this server. Please set them up first.", ephemeral=True)
+            # return
+            settings = {
+                "max_members": 10,
+                "min_duration": 20,
+                "max_duration": 7200,
+                "max_absences": 3,
+                "max_breaks": 3,
+                "max_user_sessions": 5,
+                "perms_mode": "ALLOW",
+                "whitelist_users": [],
+                "blacklist_users": [],
+                "whitelist_channels": [],
+                "blacklist_channels": [],
+                "whitelist_roles": [],
+                "blacklist_roles": [],
+            }
+            
+        
          # Validate parameters before proceeding
         if not await validate_parameters(
+            # Passed to send followup messages
             interaction = interaction,
             name = name,
             member_ids = member_ids,
             duration= duration,
-            max_members=self.guild_settings[interaction.guild.id].max_members,
+            # Removed max_members - its validation will happen in settings_checkin command
         ):
             logger.error(f"Checkin Session: Validation failed for {name} by user {interaction.user.display_name}")
             return          # Exit if validation fails
@@ -950,14 +924,30 @@ class CheckinCog(commands.Cog):
                 name=name,
                 member_ids=member_ids,
                 duration=duration_seconds,
-                settings=self.guild_settings[interaction.guild.id]
             )
             self.active_sessions[session.session_id] = session  # Store session by its ID
             logger.info(f"Check-in session with ID {session.session_id} started by {interaction.user.display_name} in channel {interaction.channel.id}.")
-
-            # Send the initial message with buttons
+            
+            # Add settings values to the session
+            session.max_members = settings["max_members"]
+            session.min_duration = settings["min_duration"]
+            session.max_duration = settings["max_duration"]
+            session.max_absences = settings["max_absences"]
+            session.max_breaks = settings["max_breaks"]
+            session.max_user_sessions = settings["max_user_sessions"]
+            session.perms_mode = settings["perms_mode"]
+            session.whitelist_users = settings["whitelist_users"]
+            session.blacklist_users = settings["blacklist_users"]
+            session.whitelist_channels = settings["whitelist_channels"]
+            session.blacklist_channels = settings["blacklist_channels"]
+            session.whitelist_roles = settings["whitelist_roles"]
+            session.blacklist_roles = settings["blacklist_roles"]
+            
+            # Save the session to the database
             await session.setup_checkin_resources()
+            # Send the initial message with buttons
             await session.send_reminder_message(initial=True)
+            # Start the reminder loop
             self.bot.loop.create_task(session.run_checkin_reminders())
         except Exception as e:
             logger.error(f"Error starting check-in session: {str(e)}")
@@ -972,7 +962,8 @@ class CheckinCog(commands.Cog):
                            max_absences = "Maximum absences allowed before a user is kicked", 
                            max_breaks = "Maximum breaks allowed before a user is brought back to Checkin Session",
                            max_user_sessions = "Maximum sessions a user is allowed to be in",
-                           permission_mode = "Set permission mode: ALLOW or DENY"
+                           perms_mode = "Set permission mode: ALLOW or DENY"
+
                         )
     async def settings_checkin(
         self,
@@ -983,49 +974,50 @@ class CheckinCog(commands.Cog):
         max_absences : int = 3, 
         max_breaks : int = 3, 
         max_user_sessions : int = 5,
-        permission_mode : str = "ALLOW"
+        perms_mode : PermissionMode = PermissionMode.ALLOW,
+        whitelist_users : List[discord.Member] = [],
+        blacklist_users : List[discord.Member] = [],        
+        whitelist_channels : List[discord.TextChannel] = [],        
+        blacklist_channels : List[discord.TextChannel] = [],        
+        whitelist_roles : List[discord.Role] = [],        
+        blacklist_roles : List[discord.Role] = [],
+
     ):
 
         await interaction.response.defer()
         guild_id = interaction.guild.id
+        
+        settings = {
+            "max_members": max_members,
+            "min_duration": min_duration,
+            "max_duration": max_duration,
+            "max_absences": max_absences,
+            "max_breaks": max_breaks,
+            "max_user_sessions": max_user_sessions,
+            "perms_mode": perms_mode,
+            "whitelist_users": whitelist_users,
+            "blacklist_users": blacklist_users,
+            "whitelist_channels": whitelist_channels,
+            "blacklist_channels": blacklist_channels,
+            "whitelist_roles": whitelist_roles,
+            "blacklist_roles": blacklist_roles
+        }
 
         try:
-            if guild_id not in self.guild_settings:
-                self.guild_settings[guild_id] = CheckinGuildSettings(
-                    interaction = interaction,
-                    max_members=max_members,
-                    min_duration=min_duration,
-                    max_duration=max_duration,
-                    max_absences=max_absences,
-                    max_breaks=max_breaks,
-                    max_user_sessions=max_user_sessions,
-                    permission_mode = permission_mode
-                )
-            else:
-                guild_settings : CheckinGuildSettings = self.guild_settings[guild_id]
-                guild_settings.max_members = max_members
-                guild_settings.min_duration = min_duration
-                guild_settings.max_duration = max_duration
-                guild_settings.max_absences = max_absences
-                guild_settings.max_breaks = max_breaks
-                guild_settings.max_user_sessions = max_user_sessions
-                guild_settings.permission_mode = permission_mode
-
-            # Optional - Save to database
-
-            '''
-            await self.bot.db.update_checkin_settings(
-                guild_id = guild_id,
-                max_members = max_members,
-                min_duration = min_duration,
-                max_duration = max_duration,
-                max_absences = max_absences,
-                max_breaks = max_breaks,
-                max_user_sessions = max_user_sessions
-            )
-            '''
+            await self.bot.db.add_or_update_checkin_guild_settings(guild_id, settings)
+            logger.info(f"Updated Check-in settings for guild {guild_id} by user {interaction.user.id}")   
+        except Exception as e: 
+            logger.error(f"Error updating check-in settings: {str(e)}")
+            
 
             # Provide feedback to the user
+            whitelist_users_mentions = ' '.join([f"<@{user.id}>" for user in whitelist_users])
+            blacklist_users_mentions = ' '.join([f"<@{user.id}>" for user in blacklist_users])
+            whitelist_channels_mentions = ' '.join([f"<#{channel.id}>" for channel in whitelist_channels])
+            blacklist_channels_mentions = ' '.join([f"<#{channel.id}>" for channel in blacklist_channels])
+            whitelist_roles_mentions = ' '.join([f"<@&{role.id}>" for role in whitelist_roles])
+            blacklist_roles_mentions = ' '.join([f"<@&{role.id}>" for role in blacklist_roles])
+
             response = (
                 f"Check-in settings updated for this server:\n\n"
                 f"**Max Members**: {max_members}\n"
@@ -1033,10 +1025,17 @@ class CheckinCog(commands.Cog):
                 f"**Max Duration**: {max_duration} seconds\n"
                 f"**Max Absences**: {max_absences}\n"
                 f"**Max Breaks**: {max_breaks}\n"
-                f"**Max User Sessions**: {max_user_sessions}"
+                f"**Max User Sessions**: {max_user_sessions}\n"
+                f"**Permission Mode**: {perms_mode.value}\n"
+                f"**Whitelist Users**: {whitelist_users_mentions}\n"
+                f"**Blacklist Users**: {blacklist_users_mentions}\n"
+                f"**Whitelist Channels**: {whitelist_channels_mentions}\n"
+                f"**Blacklist Channels**: {blacklist_channels_mentions}\n"
+                f"**Whitelist Roles**: {whitelist_roles_mentions}\n"
+                f"**Blacklist Roles**: {blacklist_roles_mentions}\n"
             )
 
-            await interaction.followup.send(response, ephemeral=True)
+            await interaction.followup.send(response, ephemeral=False)
             logger.info(f"Updated Check-in settings for guild {guild_id} by user {interaction.user.id}")
 
         except Exception as e:
@@ -1049,3 +1048,74 @@ class CheckinCog(commands.Cog):
 async def setup(bot):
     await bot.add_cog(CheckinCog(bot))
     logger.info("CheckinCog loaded successfully.")
+
+
+
+
+
+
+## Extra code we can use later on
+class CheckinGuildSettings:
+    def __init__(self, interaction : discord.Interaction, max_members = 10, min_duration = 20, max_duration = 7200, max_absences = 3, max_breaks = 3, max_user_sessions = 5, permission_mode = "ALLOW"):
+        self.guild = interaction.guild
+        self.guild_id = interaction.guild.id
+        # Initialize all settings for the guild here
+        self.max_members = max_members
+        self.min_duration = min_duration
+        self.max_duration = max_duration
+        self.max_absences = max_absences
+        self.max_breaks = max_breaks
+        self.max_user_sessions = max_user_sessions
+
+        # Permissions-related settings
+        self.permission_mode = permission_mode
+        self.whitelist_users: List[int] = []
+        self.blacklist_users: List[int] = []
+        self.whitelist_channels: List[int] = []
+        self.blacklist_channels: List[int] = []
+        self.whitelist_roles: List[int] = []
+        self.blacklist_roles: List[int] = []
+
+
+    def has_permission(self, user_id: int, channel_id: int, role_ids: List[int]) -> bool:
+        """Checks if a user has permission based on the guild's settings."""
+        logger.info(f"Checking permissions for user {user_id} in channel {channel_id} in guild {self.guild_id}...")
+
+        if self.permission_mode == "ALLOW":
+            if user_id in self.blacklist_users or channel_id in self.blacklist_channels:
+                return False
+            if self.whitelist_users and user_id not in self.whitelist_users:
+                return False
+            if self.whitelist_channels and channel_id not in self.whitelist_channels:
+                return False
+            if self.whitelist_roles:
+                if not set(role_ids).intersection(self.whitelist_roles):
+                    return False
+        else:
+            if user_id in self.whitelist_users or channel_id in self.whitelist_channels:
+                return True
+            if self.blacklist_users and user_id in self.blacklist_users:
+                return False
+            if self.blacklist_channels and channel_id in self.blacklist_channels:
+                return False
+            if self.blacklist_roles:
+                if set(role_ids).intersection(self.blacklist_roles):
+                    return False
+        return True
+
+    ### --- DECORATORS --- ###
+    
+    # Check - /checkin Command Permissions
+    def checkin_command_permissions(func):
+        """Decorator to check permissions for the `/checkin` command."""
+        @wraps(func)
+        async def wrapper(cog : 'CheckinCog', interaction: discord.Interaction, *args, **kwargs):
+            guild_settings : CheckinGuildSettings = cog.guild_settings[interaction.guild.id] if cog.guild_settings else None
+            role_ids = [role.id for role in interaction.user.roles]
+            if not guild_settings or not guild_settings.has_permission(interaction.user.id, interaction.channel.id, role_ids):
+                await interaction.response.send_message("You don't have permission to use this command here.", ephemeral=True)
+                return
+            return await func(cog, interaction, *args, **kwargs)
+        return wrapper
+
+

@@ -23,7 +23,6 @@ class Manager(commands.Cog):
     max_groups = 6
     max_overall = 10
 
-
     def __init__(self, bot):
         self.bot = bot
         logger.info("Manager cog initialized")
