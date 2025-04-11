@@ -34,6 +34,7 @@ class StudyGroup:
         self.group_role_id: int = 0
         self.vc_id: int = 0
         self.text_id: int = 0
+        self.category_id: int = 0
         self.info_embed_id = 0
 
         # VC Settings
@@ -49,6 +50,9 @@ class StudyGroup:
         
         # Final Stuff
         self.active : bool = False
+        
+        # Group Settings
+        self.is_permanent : bool = False
         
         # Other stuff, not stored in Database
         self.cog : 'StudyGroupCog' = cog
@@ -168,8 +172,9 @@ class StudyGroup:
                 "speak_enabled": self.speak_enabled,
                 "video_mode": self.video_mode,
                 "video_timer": self.video_timer,
-                "active": self.active
-            }) 
+                "active": self.active,
+                "is_permanent": self.is_permanent
+            })
             logger.info(f"StudyGroup '{self.name}' saved to the database.")
         except Exception as e:
             self.active = False
@@ -179,8 +184,6 @@ class StudyGroup:
 
         # Log if all goes well
         logger.info(f"StudyGroup '{self.name}'created successfully with roles, channels, and database entry.")
-        return f"StudyGroup '{self.name}' created successfully with roles, channels, and database entry."
-
 
 
     ### --- MEMBERSHIP FUNCTIONS --- ###
@@ -322,7 +325,7 @@ class StudyGroup:
             self.owner_id = new_owner_id
             
             # Update the database after transferring ownership
-            await self.db.update_study_group(study_group_data = {"group_id": self.group_id, "owner_id": new_owner_id})
+            await self.db.update_study_group(study_group_data = {"group_id": self.group_id, "owner_id": new_owner_id, "is_permanent": self.is_permanent})
             await self.group_info_embed(update=True)
 
             logger.info(f"Ownership of group {self.study_group.name} transferred to from {interaction.user.display_name} to {new_owner.display_name}.", ephemeral=True)
@@ -465,9 +468,14 @@ class StudyGroup:
             embed.add_field(name = "Number of Members", value = len(self.member_ids), inline=True)
             embed.add_field(name = "Max Size", value = self.max_members, inline=True)
             embed.add_field(name = "Group Duration", value = parse_seconds_to_hms(self.duration), inline=True)
-            embed.add_field(name="Video", value=f"Video Mode: {self.video_mode.capitalize()}", inline=True)
-            embed.add_field(name="Video Timer", value=f"{self.video_timer} seconds", inline=True)
-            embed.add_field(name="Speak", value="On" if self.speak_enabled else "Off", inline=True)
+            if self.video_mode:
+                embed.add_field(name="Video", value=f"Video Mode: {self.video_mode.capitalize()}", inline=True)
+                embed.add_field(name="Video Timer", value=f"{self.video_timer} seconds", inline=True)
+            else:
+                embed.add_field(name="Video", value="Off", inline=True)
+
+            if self.speak_enabled:
+                embed.add_field(name="Speak", value="On", inline=True)
 
             # If updating an existing message
             if update and self.info_embed_id:
@@ -631,7 +639,7 @@ class StudyGroup:
                 "group_id": self.group_id,
                 "duration": self.duration,
                 "end_time": self.end_time
-            })
+            }, update_type="time")
             
             await self.group_info_embed(update=True)
             await interaction.response.send_message(f"Duration extended by 1 hour. New end time: {self.end_time}", ephemeral=True)
@@ -658,35 +666,64 @@ class StudyGroup:
 
     ## Callback (Not Implemented)- Leave Group
     async def leave_group_callback(self, interaction: discord.Interaction) -> None:
-        """Handle a user leaving the study group."""
+        """
+        Handle a user leaving the study group, including owner transfer or group deletion.
+        """
         try:
-            # Check if the user is actually in the group
-            if interaction.user.id not in self.member_ids:
-                logger.warning(f"User {interaction.user.display_name} (ID: {interaction.user.id}) is not a member of group '{self.name}'.")
-                await interaction.response.send_message("You are not a member of this group.", ephemeral=True)
-                return
-            
-            # Check if the user is the owner and cannot leave
-            if interaction.user.id == self.owner_id:
-                logger.warning(f"The owner {interaction.user.display_name} cannot leave the group: {self.name}.")
-                await interaction.response.send_message("The owner cannot leave the group.", ephemeral=True)
+            await interaction.response.defer(ephemeral=True)
+
+            member_id = interaction.user.id
+            member = interaction.user
+
+            # Validate if user is a member
+            if member_id not in self.member_ids:
+                await interaction.followup.send("You are not a member of this group.", ephemeral=True)
                 return
 
-            # Remove the user from the group
-            await self.remove_member(interaction, interaction.user.id)
+            # If the member is the owner
+            if member_id == self.owner_id:
+                if self.is_permanent:
+                    # Transfer ownership if the group is permanent
+                    if len(self.member_ids) > 1:
+                        # Transfer to a random remaining member
+                        new_owner_id = next(id for id in self.member_ids if id != member_id)
+                        await self.transfer_ownership(interaction, new_owner_id)
+                        await interaction.followup.send(f"You have left the group. Ownership transferred to <@{new_owner_id}>.", ephemeral=True)
+                    else:
+                        # If no other members, the group remains but without an owner
+                        self.owner_id = None  # No owner
+                        await self.db.update_study_group(study_group_data={"group_id": self.group_id, "owner_id": None})
+                        await interaction.followup.send("You have left the group. There are no remaining members.", ephemeral=True)
+                        # Delete the channels
+                        await self.delete_channels()
+                else:
+                    # Delete the group if it's temporary
+                    await self.end_group()
+                    await interaction.followup.send("You have left the group, and as the owner of a temporary group, the group has been deleted.", ephemeral=True)
+                    return
 
-            # Check if the group is now empty and end it if so
-            if not self.member_ids:
-                logger.info(f"Group '{self.name}' is now empty after {interaction.user.display_name} left. Ending group.")
-                await interaction.followup.send("You have left the group and since you were the last member, the group has been ended.", ephemeral=True)
-                await self.end_group()  # End the group if no members are left
-            else:               
-                logger.info(f"User {interaction.user.display_name} (ID: {interaction.user.id}) has left the study group '{self.name}'.")
-                await interaction.response.send_message("You have successfully left the group.", ephemeral=True)
+            # For regular members, simply remove them
+            else:
+                await self.remove_member(interaction, member_id)
+                await interaction.followup.send("You have successfully left the group.", ephemeral=True)
+
+            # Handle cases where all members have left
+            if not self.member_ids and not self.is_permanent:
+                # If no members left in a temporary group, end the group
+                await self.end_group()
+                await interaction.followup.send("You have left the group, and since there are no other members, the group has been deleted.", ephemeral=True)
+            elif not self.member_ids and self.is_permanent:
+                # If no members left in a permanent group, just delete the channels
+                await self.delete_channels()
+                await interaction.followup.send("You have left the group, and since there are no other members, the group's channels have been deleted.", ephemeral=True)
             
         except Exception as e:
-            logger.error(f"Error handling leave group for user {interaction.user.display_name} in group '{self.name}': {e}")
-            await interaction.response.send_message("An error occurred while trying to leave the group.", ephemeral=True)
+            logger.error(f"Failed to handle leave for {interaction.user.display_name}: {e}")
+            await interaction.followup.send("Failed to process your request to leave the group.", ephemeral=True)
+
+    async def delete_channels(self):
+        """Deletes the channels associated with the study group."""
+        await self.end_group(delete_text_channel=True, only_channels=True)
 
 
 
@@ -764,22 +801,22 @@ class StudyGroup:
             logger.info(f"The End condition has been triggered.")
 
             await asyncio.sleep(60)
-
-            # 1. Handle text channel deletion or permission revoking
-            if text_channel:
-                if delete_text_channel:
-                    try:
-                        await text_channel.delete(reason="Study group ended, deleting text channel.")
-                        logger.info(f"Text channel '{text_channel.name}' deleted for group '{self.name}'.")
-                    except Exception as e:
-                        logger.error(f"Error deleting text channel '{text_channel.name}': {e}")
-                else:
-                    try:
-                        # Revoke the group's role permissions from the text channel
-                        await text_channel.set_permissions(role, overwrite=None)
-                        logger.info(f"Permissions revoked from text channel '{text_channel.name}' for role '{role.name}'.")
-                    except Exception as e:
-                        logger.error(f"Error revoking permissions in text channel '{text_channel.name}': {e}")
+            if not self.is_permanent:
+                # 1. Handle text channel deletion or permission revoking
+                if text_channel:
+                    if delete_text_channel:
+                        try:
+                            await text_channel.delete(reason="Study group ended, deleting text channel.")
+                            logger.info(f"Text channel '{text_channel.name}' deleted for group '{self.name}'.")
+                        except Exception as e:
+                            logger.error(f"Error deleting text channel '{text_channel.name}': {e}")
+                    else:
+                        try:
+                            # Revoke the group's role permissions from the text channel
+                            await text_channel.set_permissions(role, overwrite=None)
+                            logger.info(f"Permissions revoked from text channel '{text_channel.name}' for role '{role.name}'.")
+                        except Exception as e:
+                            logger.error(f"Error revoking permissions in text channel '{text_channel.name}': {e}")
 
             # 2. Delete the voice channel
             if voice_channel:
@@ -904,7 +941,7 @@ class StudyGroup:
 
 
 
-    ## Send invite message to a member
+   ## Send invite message to a member
     async def send_invite(self, interaction, invited_member: discord.Member, send_channel: discord.TextChannel) -> None:
         ### Invite a user to the group
         try:
@@ -949,9 +986,6 @@ class StudyGroup:
 
 
 
-
-
-
 class StudyGroupCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -959,7 +993,7 @@ class StudyGroupCog(commands.Cog):
         logger.info("Study Group cog initialized")
 
 
-
+## TODO - We should put the duplicate check directly into StudyGroup class, and the validation of parameters
     @app_commands.command(name="create_group", description="Create a new study group")
     @app_commands.describe(name="Set a name for your study group", max_members="Set the Max number of members", mentions="Mention roles or users to add", category="Category where the group channels will be created")
     async def create_group(self, interaction: discord.Interaction, name: str, mentions : str, category: discord.CategoryChannel, max_members: int = 10):
@@ -1016,7 +1050,125 @@ class StudyGroupCog(commands.Cog):
         await interaction.followup.send(result, ephemeral=True)
  
 
+    @app_commands.command(name="make_permanent", description="Make a study group permanent (if slots are available)")
+    @app_commands.describe(group_id="ID of the group to make permanent")
+    async def make_permanent(self, interaction: discord.Interaction, group_id: str):
+        try:
+            await interaction.response.defer(ephemeral=True)
+            if group_id not in self.study_groups:
+                await interaction.followup.send(f"Group with ID '{group_id}' not found.", ephemeral=True)
+                return
 
+            study_group = self.study_groups[group_id]
+
+            # Check if the user is the owner
+            if study_group.owner_id != interaction.user.id:
+                await interaction.followup.send("You must be the owner of the group to make it permanent.", ephemeral=True)
+                return
+            
+            # Check if the group is already permanent
+            if study_group.is_permanent:
+                await interaction.followup.send("This group is already permanent.", ephemeral=True)
+                return
+
+            # Check the number of permanent groups in the guild
+            permanent_groups = [group for group in self.study_groups.values() if group.guild_id == interaction.guild.id and group.is_permanent]
+            
+            # If there are more than 5 permanent groups, don't let the group become permanent
+            if len(permanent_groups) >= 5:
+                await interaction.followup.send("This server has reached the maximum number of permanent groups (5).", ephemeral=True)
+                return
+            
+            # Make the group permanent
+            study_group.is_permanent = True
+            await self.bot.db.update_study_group(study_group_data = {"group_id": study_group.group_id, "is_permanent": study_group.is_permanent})
+            await study_group.group_info_embed(update=True)
+            await interaction.followup.send(f"Group '{study_group.name}' is now permanent.", ephemeral=True)
+            return
+            
+        except Exception as e:
+            logger.error(f"Error making group permanent: {e}")
+            await interaction.followup.send("An error occurred while making the group permanent.", ephemeral=True)
+            return
+
+
+    @app_commands.command(name="make_temporary", description="Make a study group temporary")
+    @app_commands.describe(group_id="ID of the group to make temporary")
+    async def make_temporary(self, interaction: discord.Interaction, group_id: str):
+        try:
+            await interaction.response.defer(ephemeral=True)
+
+            if group_id not in self.study_groups:
+                await interaction.followup.send(f"Group with ID '{group_id}' not found.", ephemeral=True)
+                return
+
+            study_group = self.study_groups[group_id]
+
+            # Check if the user is the owner
+            if study_group.owner_id != interaction.user.id:
+                await interaction.followup.send("You must be the owner of the group to make it temporary.", ephemeral=True)
+                return
+
+            # Check if the group is already temporary
+            if not study_group.is_permanent:
+                await interaction.followup.send("This group is already temporary.", ephemeral=True)
+                return
+
+            # Make the group temporary
+            study_group.is_permanent = False
+            await self.bot.db.update_study_group(study_group_data = {"group_id": study_group.group_id, "is_permanent": study_group.is_permanent})
+            await study_group.group_info_embed(update=True)
+            await interaction.followup.send(f"Group '{study_group.name}' is now temporary.", ephemeral=True)
+            return
+
+        except Exception as e:
+            logger.error(f"Error making group temporary: {e}")
+            await interaction.followup.send("An error occurred while making the group temporary.", ephemeral=True)
+            return
+
+
+    @app_commands.command(name="group_info", description="View information about a study group")
+    @app_commands.describe(group_id="ID of the group to view")
+    async def group_info(self, interaction: discord.Interaction, group_id: str):
+        try:
+            await interaction.response.defer(ephemeral=True)
+            
+            if group_id not in self.study_groups:
+                await interaction.followup.send(f"Group with ID '{group_id}' not found.", ephemeral=True)
+                return
+            
+            study_group = self.study_groups[group_id]
+            
+            # Construct the embed information
+            embed = discord.Embed(title=f"Information for Group: {study_group.name}", color=discord.Color.blue())
+            embed.add_field(name="Group ID", value=study_group.group_id, inline=False)
+            embed.add_field(name="Owner", value=f"<@{study_group.owner_id}>", inline=True)
+            embed.add_field(name="Members", value=", ".join([f"<@{member_id}>" for member_id in study_group.member_ids]), inline=False)
+            embed.add_field(name="Max Members", value=study_group.max_members, inline=True)
+            embed.add_field(name="Category", value=f"<#{study_group.category_id}>", inline=True)
+            
+            # Show temporary or permanent status
+            if study_group.is_permanent:
+                embed.add_field(name="Status", value="Permanent", inline=False)
+            else:
+                embed.add_field(name="Status", value="Temporary", inline=False)
+            
+            # For temporary groups, show end time
+            if not study_group.is_permanent:
+                time_left = study_group.end_time - datetime.now()
+                if time_left.total_seconds() > 0:
+                    embed.add_field(name="Time Remaining", value=parse_seconds_to_hms(int(time_left.total_seconds())), inline=False)
+                else:
+                    embed.add_field(name="Time Remaining", value="Expired", inline=False)
+            
+            # Send the embed
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+        
+        except Exception as e:
+            logger.error(f"Error retrieving group information: {e}")
+            await interaction.followup.send("An error occurred while retrieving group information.", ephemeral=True)
+            return
 
     @app_commands.command(name="group_add_member", description="Add a member to an existing study group")
     @app_commands.describe(group_id="ID of the group to add member", user_id="User ID of the member to add")
@@ -1080,15 +1232,16 @@ class StudyGroupCog(commands.Cog):
             await interaction.followup.send("An error occurred while transferring ownership.", ephemeral=True)
 
 
+
+
+
+
+
 class StudyGroupCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.study_groups = {}
         logger.info("Study Group cog initialized")
-
-
-
-
 
     @commands.Cog.listener()
     async def on_ready(self):

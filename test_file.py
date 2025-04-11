@@ -2,7 +2,6 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timedelta
-
 # Assuming your StudyGroup class is in study_groups.py
 import discord
 from cogs.study_groups import StudyGroup, StudyGroupCog
@@ -20,13 +19,12 @@ class TestStudyGroup(unittest.IsolatedAsyncioTestCase):
         self.db = AsyncMock()
         self.cog = MagicMock()
         self.guild = MagicMock()
+        self.guild.id = 12345  # Add a guild ID
         self.interaction = AsyncMock()
         self.interaction.guild = self.guild
         self.interaction.user = MagicMock()
         self.interaction.followup.send = AsyncMock()
         self.interaction.response.send_message = AsyncMock()
-
-
         # Initialize a StudyGroup instance with some dummy data
         self.study_group = StudyGroup(
             db=self.db,
@@ -40,26 +38,20 @@ class TestStudyGroup(unittest.IsolatedAsyncioTestCase):
         )
         self.study_group.guild = self.guild
         self.study_group.group_role_id = 54321
-        self.study_group.text_id = 98765
-
+        self.study_group.text_id = 98765  # Add a text channel ID
         # Initialize pomodoro cog
         self.bot_instance = MyBot()  # Create an instance of your bot class
+        self.bot_instance.db = self.db  # Set the db attribute for the bot instance
         self.pomodoro_cog = PomodoroCog(self.bot_instance)
-
         # Initialize some of the Pomodoro cog instances
         self.channel = AsyncMock()
         self.member = AsyncMock()
         self.user = AsyncMock()
         self.ctx = AsyncMock()
-
-
-
         # Initialize Voice Channel Cog
         self.voice_channel_cog = VoiceChannelCog(self.bot_instance)
-
-
         # Mocks for members and roles
-        self.member1 = MagicMock(id=11111, display_name="Creator")
+        self.member1 = AsyncMock(id=11111, display_name="Creator")
         self.member2 = MagicMock(id=22222, display_name="New Member")
         self.member2.add_roles = AsyncMock()
         self.member3 = MagicMock(id=33333, display_name="Other Member")
@@ -72,9 +64,32 @@ class TestStudyGroup(unittest.IsolatedAsyncioTestCase):
             11111: self.member1,
             22222: self.member2,
             33333: self.member3,
-        }.get(id)
-        self.role = MagicMock(name="Test Group Role")
+        }.get(id)  # Retrieve mocked members
+        self.role = AsyncMock(name="Test Group Role")
         self.guild.get_role.return_value = self.role
+        # Mock study groups cog
+        self.study_group_cog = StudyGroupCog(self.bot_instance)
+        self.study_group_cog.db = self.db
+        self.study_group_cog.study_groups = {}
+        self.bot_instance.add_cog(self.study_group_cog)
+
+
+        # Mock the voice channel cog
+        self.voice_channel_cog = VoiceChannelCog(self.bot_instance)
+        self.bot_instance.add_cog(self.voice_channel_cog)
+
+
+        # Mock the delete_group method on the cog instance
+        self.study_group_cog.delete_group = AsyncMock()
+
+
+        # Setup study group cog
+        self.study_group_cog = StudyGroupCog(self.bot)
+        self.study_group_cog.db = self.db
+        self.study_group_cog.bot = self.bot
+        self.bot.get_cog.return_value = self.study_group_cog
+        self.study_group_cog.study_groups = {self.study_group.group_id: self.study_group}
+
 
     def test_generate_group_id(self):
         group_id = self.study_group.generate_group_id()
@@ -886,10 +901,265 @@ class TestTaskListCog(unittest.IsolatedAsyncioTestCase):
             "Task not found or you do not have permission to complete it.", ephemeral=True
         )'''
 
+    async def test_create_group_command(self):
+        # Mock data
+        group_name = "New Study Group"
+        max_members = 5
+        category = MagicMock(id=12345)
+        self.interaction.guild.categories = [category]
+        self.interaction.channel = MagicMock()
+        self.interaction.channel.send = AsyncMock()
+        self.interaction.user.id = 11111
+        self.interaction.guild.id = 12345
+        self.db.create_study_group.return_value = "some_group_id"
+        self.db.get_study_group_by_id.return_value = None
+
+        with patch.object(self.study_group_cog, "validate_group_parameters", return_value=True) as mock_validate, \
+             patch.object(StudyGroup, "setup_group_resources", new_callable=AsyncMock) as mock_setup:
+            # Call the create_group command
+            await self.study_group_cog.create_group(self.interaction, group_name, [], max_members, category)
+
+            # Assertions
+            mock_validate.assert_called_once()
+            self.db.create_study_group.assert_called_once()
+            self.db.get_study_group_by_id.assert_called_once_with("some_group_id")
+            mock_setup.assert_called_once_with(self.interaction)
+            self.interaction.followup.send.assert_called_once()
 
 
+    async def test_make_permanent_command(self):
+        # Setup: Existing temporary group
+        self.study_group.is_permanent = False
+        self.interaction.user.id = 11111  # Owner of the group
+        self.study_group_cog.study_groups = {self.study_group.group_id: self.study_group}
+        self.db.get_permanent_group_count.return_value = 0
+
+        # Call the command
+        await self.study_group_cog.make_permanent(self.interaction, self.study_group.group_id)
+
+        # Assertions
+        self.db.get_permanent_group_count.assert_called_once_with(self.interaction.guild.id)
+        self.db.update_study_group_by_id.assert_called_once_with(self.study_group.group_id, {"is_permanent": 1})
+        self.interaction.followup.send.assert_called_once_with(f"Study group '{self.study_group.name}' is now permanent.")
+        self.assertTrue(self.study_group.is_permanent)  # Check if the group's attribute is updated
+
+    async def test_make_permanent_command_limit_reached(self):
+        # Setup: Existing temporary group, permanent limit reached
+        self.study_group.is_permanent = False
+        self.interaction.user.id = 11111  # Owner of the group
+        self.study_group_cog.study_groups = {self.study_group.group_id: self.study_group}
+        self.db.get_permanent_group_count.return_value = 5  # Limit reached
+
+        # Call the command
+        await self.study_group_cog.make_permanent(self.interaction, self.study_group.group_id)
+
+        # Assertions
+        self.db.get_permanent_group_count.assert_called_once_with(self.interaction.guild.id)
+        self.db.update_study_group_by_id.assert_not_called()  # Should not update
+        self.interaction.followup.send.assert_called_once_with("Cannot make the group permanent. This server has reached the limit of 5 permanent study groups.")
+        self.assertFalse(self.study_group.is_permanent)  # Should remain temporary
+
+    async def test_make_permanent_command_not_owner(self):
+        # Setup: User is not the owner
+        self.study_group.is_permanent = False
+        self.interaction.user.id = 22222  # Not the owner
+        self.study_group_cog.study_groups = {self.study_group.group_id: self.study_group}
+
+        # Call the command
+        await self.study_group_cog.make_permanent(self.interaction, self.study_group.group_id)
+
+        # Assertions
+        self.db.get_permanent_group_count.assert_not_called()  # Should not check limit
+        self.db.update_study_group_by_id.assert_not_called()  # Should not update
+        self.interaction.followup.send.assert_called_once_with("You're not the owner of this group.", ephemeral=True)
+        self.assertFalse(self.study_group.is_permanent)  # Should remain temporary
 
 
+    async def test_make_temporary_command(self):
+        # Setup: Existing permanent group
+        self.study_group.is_permanent = True
+        self.interaction.user.id = 11111  # Owner of the group
+        self.study_group_cog.study_groups = {self.study_group.group_id: self.study_group}
+
+        # Call the command
+        await self.study_group_cog.make_temporary(self.interaction, self.study_group.group_id)
+
+        # Assertions
+        self.db.update_study_group_by_id.assert_called_once_with(self.study_group.group_id, {"is_permanent": 0})
+        self.interaction.followup.send.assert_called_once_with(f"Study group '{self.study_group.name}' is now temporary.")
+        self.assertFalse(self.study_group.is_permanent)  # Check if the group's attribute is updated
+
+    async def test_make_temporary_command_not_owner(self):
+        # Setup: User is not the owner
+        self.study_group.is_permanent = True
+        self.interaction.user.id = 22222  # Not the owner
+        self.study_group_cog.study_groups = {self.study_group.group_id: self.study_group}
+
+        # Call the command
+        await self.study_group_cog.make_temporary(self.interaction, self.study_group.group_id)
+
+        # Assertions
+        self.db.update_study_group_by_id.assert_not_called()  # Should not update
+        self.interaction.followup.send.assert_called_once_with("You're not the owner of this group.", ephemeral=True)
+        self.assertTrue(self.study_group.is_permanent)  # Should remain permanent
+
+    async def test_leave_group_callback_owner_of_permanent_group(self):
+        # Setup: Owner leaving a permanent group with other members
+        self.study_group.member_ids = [11111, 22222]  # Owner and another member
+        self.study_group.owner_id = 11111
+        self.study_group.is_permanent = True
+        self.interaction.user.id = 11111  # Owner leaving
+
+        # Mock the database update
+        self.db.transfer_ownership_study_group_db = AsyncMock()
+
+        # Call the leave_group_callback
+        await self.study_group.leave_group_callback(self.interaction)
+
+        # Assertions
+        self.db.transfer_ownership_study_group_db.assert_called_once_with(
+            self.study_group.group_id, 22222
+        )  # Ownership should transfer to the remaining member
+        self.assertEqual(self.study_group.owner_id, 22222)  # Owner should be updated
+        self.interaction.response.send_message.assert_called_once()
+        self.interaction.followup.send.assert_called_once()
+
+    async def test_leave_group_callback_last_member_of_permanent_group(self):
+        # Setup: Last member leaving a permanent group
+        self.study_group.member_ids = [11111]  # Only the owner
+        self.study_group.owner_id = 11111
+        self.study_group.is_permanent = True
+        self.interaction.user.id = 11111  # Owner leaving
+        self.study_group.group_id = "some_group_id"
+
+        # Call the leave_group_callback
+        await self.study_group.leave_group_callback(self.interaction)
+
+        # Assertions
+        self.db.transfer_ownership_study_group_db.assert_called_once_with(
+            self.study_group.group_id, 1
+        )
+        self.assertEqual(self.study_group.owner_id, 1)  # Bot should be the new owner
+        self.interaction.response.send_message.assert_called_once()
+        self.interaction.followup.send.assert_called_once()
+
+    async def test_leave_group_callback_member_of_permanent_group(self):
+        # Setup: Member leaving a permanent group, but not the owner
+        self.study_group.member_ids = [11111, 22222]  # Owner and another member
+        self.study_group.owner_id = 11111
+        self.study_group.is_permanent = True
+        self.interaction.user.id = 22222  # Member leaving
+
+        # Mock the database call
+        self.db.remove_member_from_study_group_db = AsyncMock()
+
+        # Call the leave_group_callback
+        await self.study_group.leave_group_callback(self.interaction)
+
+        # Assertions
+        self.db.remove_member_from_study_group_db.assert_called_once_with(
+            self.study_group.group_id, 22222
+        )
+        self.interaction.response.send_message.assert_called_once()
+        self.interaction.followup.send.assert_called_once()
+
+    async def test_leave_group_callback_owner_of_temporary_group(self):
+        # Setup: Owner leaving a temporary group
+        self.study_group.member_ids = [11111]  # Only the owner
+        self.study_group.owner_id = 11111
+        self.study_group.is_permanent = False
+        self.interaction.user.id = 11111  # Owner leaving
+        self.study_group.group_id = "some_group_id"
+
+        # Call the leave_group_callback
+        await self.study_group.leave_group_callback(self.interaction)
+
+        # Assertions
+        self.study_group_cog.delete_group.assert_called_once_with(self.interaction, self.study_group.group_id)  # Group should be deleted
+        self.interaction.response.send_message.assert_called_once()
+        self.interaction.followup.send.assert_called_once()
+
+    async def test_leave_group_callback_last_member_of_temporary_group(self):
+        # Setup: Last member leaving a temporary group (same as owner leaving in this case)
+        self.study_group.member_ids = [11111]  # Only the owner
+        self.study_group.owner_id = 11111
+        self.study_group.is_permanent = False
+        self.interaction.user.id = 11111  # Owner leaving
+        self.study_group.group_id = "some_group_id"
+        # Call the leave_group_callback
+        await self.study_group.leave_group_callback(self.interaction)
+
+        # Assertions
+        self.study_group_cog.delete_group.assert_called_once_with(self.interaction, self.study_group.group_id)  # Group should be deleted
+        self.interaction.response.send_message.assert_called_once()
+        self.interaction.followup.send.assert_called_once()
+
+    async def test_run_timer_all_members_leave(self):
+        # Setup a pomodoro session
+        self.channel.members = []  # No members in voice channel
+        session_data = {
+            "current_stage": "focus",
+            "cycles_completed": 0,
+            "voice_channel": self.channel,
+            "member": self.member1,
+            "focus_duration": 0.01,
+            "short_break_duration": 0.01,
+            "long_break_duration": 0.01,
+            "num_cycles": 1,
+            "is_paused": False,
+        }
+        session = PomodoroSession(**session_data)
+        # Mock the end_pomodoro method
+        with patch.object(self.pomodoro_cog, "end_pomodoro", new_callable=AsyncMock) as mock_end_pomodoro:
+            # Run the timer and wait for a short time to allow it to check for members
+            timer_task = asyncio.create_task(session.run_timer(self.ctx, session_data))
+            await asyncio.sleep(0.1)  # Let the timer run for a bit
+            timer_task.cancel()
+            try:
+                await timer_task
+            except asyncio.CancelledError:
+                pass
+            # Assertions
+            mock_end_pomodoro.assert_called_once_with(self.ctx, self.member1, reason="All members have left the voice channel.")
+
+    async def test_add_member_command(self):
+        # Mock an interaction and a member to add
+        self.interaction.user.id = 11111  # Assume the owner is calling
+        member_to_add = MagicMock(id=22222)
+        self.guild.get_member.return_value = member_to_add
+        self.study_group.member_ids = [11111]
+        # Call the command
+        await self.study_group_cog.group_add_member(self.interaction, member_to_add.id, self.study_group.group_id)
+        # Assertions
+        self.interaction.followup.send.assert_called_once_with(f"Member <@{member_to_add.id}> added to the group.", ephemeral=True)
+        self.assertIn(member_to_add.id, self.study_group.member_ids)
+        self.db.add_member_to_study_group_db.assert_called_once_with(self.study_group.group_id, member_to_add.id)
+
+    async def test_remove_member_command(self):
+        # Mock an interaction and a member to remove
+        self.interaction.user.id = 11111  # Assume the owner is calling
+        member_to_remove = MagicMock(id=22222)
+        self.guild.get_member.return_value = member_to_remove
+        self.study_group.member_ids = [11111, 22222]
+        # Call the command
+        await self.study_group_cog.group_remove_member(self.interaction, member_to_remove.id, self.study_group.group_id)
+        # Assertions
+        self.interaction.followup.send.assert_called_once_with(f"Member <@{member_to_remove.id}> successfully removed from the group.", ephemeral=True)
+        self.assertNotIn(member_to_remove.id, self.study_group.member_ids)
+        self.db.remove_member_from_study_group_db.assert_called_once_with(self.study_group.group_id, member_to_remove.id)
+
+    async def test_transfer_ownership_command(self):
+        # Mock an interaction and a member to transfer ownership to
+        self.interaction.user.id = 11111  # Assume the owner is calling
+        new_owner = MagicMock(id=22222)
+        self.guild.get_member.return_value = new_owner
+        self.study_group.member_ids = [11111, 22222]
+        # Call the command
+        await self.study_group_cog.group_transfer_ownership(self.interaction, new_owner.id, self.study_group.group_id)
+        # Assertions
+        self.interaction.followup.send.assert_called_once_with(content=f"Ownership transferred to from <@11111> to <@{new_owner.id}>.")
+        self.assertEqual(self.study_group.owner_id, new_owner.id)
+        self.db.transfer_ownership_study_group_db.assert_called_once_with(self.study_group.group_id, new_owner.id)
 
 
 if __name__ == "__main__":

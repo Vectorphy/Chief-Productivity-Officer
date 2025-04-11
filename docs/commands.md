@@ -15,6 +15,24 @@
   - `name`: The name of the study group you want to leave
   - Removes you from the specified study group.
 
+- `/make_permanent <name>`: Make a temporary study group permanent (Group Owner only, up to 5 per guild)
+  - `name`: The name of the study group to make permanent.
+  - Converts a temporary study group to permanent, allowing it to persist even when all members leave. Limited to 5 permanent groups per guild.
+
+- `/make_temporary <name>`: Make a permanent study group temporary (Group Owner only)
+  - `name`: The name of the study group to make temporary.
+  - Converts a permanent study group to temporary, causing it to be deleted when all members leave.
+
+- `/group_add_member <group_name> <user_id>`: Add a member to a study group (Group Owner only)
+    - `group_name`: The name of the group to add the member to.
+    - `user_id`: The ID of the user to add.
+    - Adds a member to the study group.
+
+- `/group_remove_member <group_name> <user_id>`: Remove a member from a study group (Group Owner only)
+    - `group_name`: The name of the group to remove the member from.
+    - `user_id`: The ID of the user to remove.
+    - Removes a member from the study group.
+
 - `/end_group <name>`: End a study group (group creator or manager only)
   - `name`: The name of the study group to end
   - Deletes the specified study group, removing all members and associated roles.
@@ -23,14 +41,6 @@
     - `user_id`: The ID of the user to add
     - Adds a member to the study group.
 
-- `/group_remove_member <user_id>`: Remove a member from a study group (Group Owner only)
-    - `user_id`: The ID of the user to remove
-    - Removes a member from the study group.
-
-- `/group_transfer_ownership <user_id>`: Transfer ownership of a study group (Group Owner only)
-    - `user_id`: The ID of the user to transfer ownership to
-    - Transfers ownership of the study group to another member.
-
 
 
 
@@ -38,6 +48,11 @@
   - Displays a list of all current study groups with their member counts.
 
 - `/invite_to_group <group_name> <user>`: Invite a user to your study group
+
+- `/group_transfer_ownership <group_name> <user_id>`: Transfer ownership of a study group (Group Owner only)
+    - `group_name`: The name of the group to transfer ownership of.
+    - `user_id`: The ID of the user to transfer ownership to.
+    - Transfers ownership of the study group to another member.
   - `group_name`: The name of your study group
   - `user`: The user you want to invite
   - Sends an invitation to the specified user to join your study group.
