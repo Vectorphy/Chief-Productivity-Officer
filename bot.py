@@ -4,8 +4,6 @@ import os
 import discord
 from dotenv import load_dotenv
 
-import motor.motor_asyncio
-from database import DBHandler as Database
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -26,13 +24,12 @@ class CPO(discord.Bot):
     Main bot class that inherits from discord.Bot.
     Handles bot initialization, setup, cog loading, and error handling.
     """
-    def __init__(self):
+    def __init__(self, db_handler, bot_developer_id):
         super().__init__(command_prefix='!', intents=intents)
-        self.db = Database(mongo_uri=os.getenv('MONGO_DB_URI'), db_name=os.getenv('DB_NAME'))
-        self.bot_developer_id = int(os.getenv('BOT_DEVELOPER_ID'))
+        self.db = db_handler
+        self.bot_developer_id = bot_developer_id
 
 
-    async def setup_hook(self) -> None:
         """
         Asynchronous setup hook that is called after the bot is initialized.
         Handles database connection, cog loading, and command syncing.
@@ -40,10 +37,6 @@ class CPO(discord.Bot):
         try:
             await self.db.connect()
         except motor.motor_asyncio.ServerSelectionTimeoutError:
-            logger.critical("Could not connect to MongoDB (timeout). Check your connection string and network settings.")
-            # Consider raising the exception or exiting the bot here
-        except Exception as e:
-            logger.error(f"Failed to connect to database: {e}")
 
         await self.load_cogs()
         try:
@@ -56,52 +49,26 @@ class CPO(discord.Bot):
         """
         Closes the database connection and the bot connection.
         """
-        await self.db.close()
         await super().close()
         logger.info("Bot has been closed.")
 
     async def load_cogs(self) -> None:
         """Loads all cogs (extensions) from the cogs directory."""
         for filename in os.listdir("./cogs"):
-            if filename.endswith(".py") and not filename.startswith("_"):
+            if filename.endswith(".py") and not filename.startswith("_") and filename != "test_file.py":
                 try:
-                    await self.load_extension(f"cogs.{filename[:-3]}")
+                    await self.load_extension(f"cogs.{filename[:-3]}", db=self.db)
                     logger.info(f"Loaded extension: {filename[:-3]}")
                 except discord.errors.ExtensionError as e:
                     logger.error(f"Failed to load extension {filename[:-3]}: {e}")
 
-    async def on_ready(self):
-        """Event handler for when the bot is ready."""
-        logger.info(f'{self.user} has connected to Discord!')
-        logger.info(f"Guilds: {len(self.guilds)}")
-        logger.info(f"Users: {len(set(self.get_all_members()))}")
-
-    async def on_command_error(self, ctx: discord.ApplicationContext, error: discord.DiscordException):
+    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
         """
         Command error handler.
         Handles specific command errors and logs other errors.
         """
-        if isinstance(error, discord.ApplicationCommandInvokeError):  # For general invocation errors
-        # ... handle the error, potentially accessing the original exception in error.original
-            if isinstance(error, discord.ApplicationCommandNotFound):
-                await ctx.send("Invalid command. Use `/` or `!help` for a list of commands.")
-            elif isinstance(error, discord.MissingRequiredArgument):
-                await ctx.send(f"Missing required argument: {error.param}")
-            elif isinstance(error, discord.BadArgument):
-                await ctx.send(f"Bad argument: {str(error)}")
-            else:
-                logger.error(f"An error occurred: {error}")
-                await ctx.send("An error occurred while processing the command.")
-
-    async def on_app_command_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
-        """
-        Application command error handler.
-        Handles cooldown and permission errors and logs other errors.
-        """
-        if isinstance(error, discord.app_commands.CommandOnCooldown):
-            await interaction.response.send_message(f"This command is on cooldown. Try again in {error.retry_after:.2f} seconds.", ephemeral=True)
-        elif isinstance(error, discord.app_commands.MissingPermissions):
-            await interaction.response.send_message("You don't have the required permissions to use this command.", ephemeral=True)
+        if isinstance(error, commands.CommandNotFound):\n        logger.warning(f"Command not found: {ctx.message.content}")\n        await ctx.reply("I don't know that command. Please use `/help` for a list of available commands.")\n    elif isinstance(error, commands.MissingPermissions):\n        logger.warning(f"Missing permissions for command: {ctx.message.content}")\n        await ctx.reply("You don't have the required permissions to use this command.")\n    elif isinstance(error, commands.CheckFailure):\n        logger.warning(f"Check failed for command: {ctx.message.content}")\n        await ctx.reply("You are not allowed to use this command.")\n    else:\n        logger.error(f"An error occurred: {error}")\n        await ctx.reply("An unexpected error occurred. Please try again later.")\n
+    \n\n\n@cpo.event\nasync def on_error(event, *args, **kwargs):\n        """\n        Global error handler for uncaught exceptions.\n        Logs exceptions and their context.\n        """\n        logger.exception(f"Unhandled exception in event '{event}':")\n        # Consider sending a message to an error channel or logging to a file\n
         else:
             logger.error(f"An error occurred in app command: {error}")
             await interaction.response.send_message("An error occurred while processing the command.", ephemeral=True)

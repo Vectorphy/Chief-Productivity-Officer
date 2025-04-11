@@ -689,3 +689,52 @@ class DBHandler:
 
     def fetch_checkin_members(self, session_id: str) -> List[Dict[str, Any]]:
         """Fetches all members in a check-in session."""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                SELECT member_id, status, absences
+                FROM checkin_members
+                WHERE session_id = ?
+            ''', (session_id,))
+            members = cursor.fetchall()
+            logger.debug(
+                f"Fetched {len(members)} members for check-in session {session_id}.")
+            return [dict(member) for member in members]
+        except sqlite3.Error as e:
+            logger.error(
+                f"Error fetching members for check-in session {session_id}: {e}")
+            raise
+
+    async def fetch_active_checkin_sessions(self) -> List[Dict[str, Any]]:
+        """Fetches all active check-in sessions from the database.
+
+        Returns:
+            List[Dict[str, Any]]: A list of dictionaries, each representing an active session.
+        """
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT * FROM checkin_sessions WHERE active = 1")
+            sessions = cursor.fetchall()
+            return [dict(session) for session in sessions]
+        except sqlite3.Error as e:
+            logger.error(f"Error fetching active check-in sessions: {e}")
+            raise
+
+    async def is_manager(self, user_id: int, guild_id: int) -> bool:
+        """Checks if a user is a manager in a given guild.
+
+        Args:
+            user_id (int): The ID of the user.
+            guild_id (int): The ID of the guild.
+
+        Returns:
+            bool: True if the user is a manager, False otherwise.
+        """
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT 1 FROM managers WHERE user_id = ? AND guild_id = ?", (user_id, guild_id))
+            row = cursor.fetchone()
+            return bool(row)  # Returns True if a row is found, False otherwise
+        except sqlite3.Error as e:
+            logger.error(f"Error checking if user {user_id} is a manager in guild {guild_id}: {e}")
+            raise

@@ -1,62 +1,70 @@
 import discord
 from discord import app_commands
-from discord.ext import commands
-from datetime import datetime
-import time
 import logging
-from typing import List
+from typing import Union
 
 logger = logging.getLogger(__name__)
 
 
-async def check_manager(ctx_or_interaction):
+async def check_manager(ctx_or_interaction: Union[discord.Interaction, discord.ext.commands.Context], db_handler) -> bool:
+    """
+    Checks if the user has manager permissions within the given context.
+
+    Args:
+        ctx_or_interaction (Union[discord.Interaction, discord.ext.commands.Context]): The context of the command, which could be an interaction or a command context.
+
+    Returns:
+        bool: True if the user has manager permissions, False otherwise.
+    """
     if isinstance(ctx_or_interaction, discord.Interaction):
-        bot = ctx_or_interaction.client
         guild = ctx_or_interaction.guild
         user = ctx_or_interaction.user
-    elif isinstance(ctx_or_interaction, commands.Context):
-        bot = ctx_or_interaction.bot
+    elif isinstance(ctx_or_interaction, discord.ext.commands.Context):
         guild = ctx_or_interaction.guild
         user = ctx_or_interaction.author
     else:
         logger.error(f"Unexpected context type in check_manager: {type(ctx_or_interaction)}")
         return False
 
-    guild_id = guild.id
-    if not hasattr(bot, 'manager_roles'):
-        logger.debug("Initializing bot.manager_roles")
-        bot.manager_roles = {}
-    if not hasattr(bot, 'manager_members'):
-        logger.debug("Initializing bot.manager_members")
-        bot.manager_members = {}
+    try:
+        is_user_manager = await db_handler.is_manager(user.id, guild.id)
+        logger.info(f"User {user.name} is {'a' if is_user_manager else 'not a'} manager in guild {guild.name}")
+        return is_user_manager or user.guild_permissions.administrator
+    except Exception as e:
+        logger.error(f"Error checking manager status: {e}")
+        return False
 
-    if guild_id not in bot.manager_roles:
-        bot.manager_roles[guild_id] = []
-    if guild_id not in bot.manager_members:
-        bot.manager_members[guild_id] = []
-    
-    user_roles = user.roles
-    is_manager = (user.guild_permissions.administrator or 
-                  any(role.id in bot.manager_roles[guild_id] for role in user_roles) or 
-                  user.id in bot.manager_members[guild_id])
-    logger.info(f"User {user.name} is {'a' if is_manager else 'not a'} manager")
-    return is_manager
 
-def is_manager():
-    async def predicate(ctx):
-        return await check_manager(ctx)
-    return commands.check(predicate)
+def is_manager(db_handler):
+    """
+    Decorator to check if the command invoker is a manager.
 
-def app_is_manager():
-    async def predicate(interaction):
-        return await check_manager(interaction)
+    Args:
+        db_handler: The database handler instance.
+
+    Returns:
+        A decorator that can be used with application commands.
+    """
+
+    async def predicate(interaction: discord.Interaction) -> bool:
+        return await check_manager(interaction, db_handler)
+
     return app_commands.check(predicate)
 
-def is_group_creator():
-    async def predicate(interaction):
-        logger.debug(f"Checking if user is group creator: {interaction.user}")
-        group = await interaction.client.db.get_study_group(interaction.guild_id)
-        is_creator = group and group[2] == interaction.user.id  # Assuming creator_id is at index 2
+
+def is_group_creator(db):
+    """
+    Decorator to check if the command invoker is the creator of the study group.
+    """
+
+    async def predicate(interaction: discord.Interaction):
+        logger.debug(f"Checking if user is group creator: {interaction.user} in channel {interaction.channel.id}")
+        group = await db.fetch_study_group_by_id(str(interaction.channel.id))
+        if not group:
+            logger.info(f"No group found for channel {interaction.channel.id}")
+            return False
+        is_creator = group["creator_id"] == interaction.user.id
         logger.info(f"User {interaction.user.name} is {'the' if is_creator else 'not the'} group creator")
         return is_creator
+
     return app_commands.check(predicate)

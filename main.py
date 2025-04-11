@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 
 from dotenv import load_dotenv
-from bot import CPO
+from bot import CPO, DBHandler
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -17,8 +17,16 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 BOT_DEVELOPER_ID = os.getenv('BOT_DEVELOPER_ID')
 
-# Bot instance
-cpo = CPO()
+
+async def on_shutdown(db_handler: DBHandler):
+    """Closes the database connection when the bot is shutting down."""
+    logger.info("Closing database connection...")
+    await db_handler.close()
+
+async def setup_database():
+    db_handler = DBHandler("bot_database.sqlite")
+    await db_handler.connect()
+    return db_handler
 
 async def main():
     """
@@ -32,10 +40,14 @@ async def main():
     if not BOT_DEVELOPER_ID:
         logger.warning("BOT_DEVELOPER_ID not found in .env file. Some features may be limited.")
 
+    db_handler = await setup_database()
+
+    # Bot instance
+    cpo = CPO(db_handler)
     async with cpo:
         loop = asyncio.get_running_loop()
 
-        def handle_signal(signum):
+        async def handle_signal(signum):
             """Handles received signals (SIGINT, SIGTERM) for graceful shutdown."""
             logger.info(f"Received signal {signum}, shutting down...")
             loop.create_task(cpo.close())
@@ -43,14 +55,17 @@ async def main():
 
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, handle_signal, sig)
-
         try:
             logger.info("Starting the bot...")
             await cpo.start(TOKEN)
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt detected, shutting down...")
+        except Exception as e:
+            logger.error(f"An unexpected error occurred: {e}")
         finally:
             await cpo.close()
+            await on_shutdown(db_handler)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
