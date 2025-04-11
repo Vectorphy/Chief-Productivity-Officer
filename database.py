@@ -1,78 +1,25 @@
-import asyncio
+import sqlite3
 from datetime import datetime
-
 import logging
 from typing import List, Any, Dict, Optional
 
-# Import Motor (async MongoDB driver)
-from motor.motor_asyncio import AsyncIOMotorClient
-from bson.objectid import ObjectId
-import pymongo.errors  # Import for handling PyMongo exceptions
-
 logger = logging.getLogger(__name__)
 
-# Constants for table names
-STUDY_GROUPS_TABLE = 'study_groups'
-STUDY_GROUP_MEMBERS_TABLE = 'study_groups_members'
-POMODORO_SESSIONS_TABLE = 'pomodoro_sessions'
-MANAGERS_TABLE = 'managers'
-VOICE_CHANNEL_LOGS_TABLE = 'voice_channel_logs'
-GUILD_SETTINGS_TABLE = 'guild_settings'
-TASKS_TABLE = 'tasks'
-CHECKIN_SESSIONS_TABLE = 'checkin_sessions'
-CHECKIN_MEMBERS_TABLE = 'checkin_members'
-
-
 class DBHandler:
-    def __init__(self, mongo_uri: str, db_name: str):
-        self.mongo_uri = mongo_uri
-        self.db_name = db_name
-        self.client: Optional[AsyncIOMotorClient] = None
-        self.db: Optional[AsyncIOMotorClient] = None
-        self.lock: asyncio.Lock = asyncio.Lock()
-        logger.info("Database handler initialized for MongoDB.")
+    def __init__(self, db_path: str):
+        """Initializes the DBHandler with the path to the SQLite database file."""
+        self.db_path = db_path
+        self.conn: Optional[sqlite3.Connection] = None
+        logger.info("Database handler initialized for SQLite.")
 
-    async def connect(self):
-        """Connect to the MongoDB database."""
+    async def connect(self) -> None:
+        """Connects to the SQLite database."""
         try:
-            async with self.lock:
-                self.client = AsyncIOMotorClient(self.mongo_uri)
-                self.db = self.client[self.db_name]
-                logger.info(f"Connected to MongoDB database: {self.db_name}")
-
-                    # Create indexes (if needed)
-                await self.create_indexes()
-        except Exception as e:
-            logger.error(f"Error connecting to MongoDB: {e}")
-
-    async def create_indexes(self):
-        """Create indexes for efficient querying."""
-        try:
-            # Example: Create unique index on study_groups.group_id
-            await self.db[STUDY_GROUPS_TABLE].create_index("group_id", unique=True)
-            logger.info("Created unique index on study_groups.group_id")
-        except Exception as e:
-            logger.error(f"Error creating indexes: {e}")
-
-    async def close(self) -> None:
-        """Close the database connection."""
-        if self.client:
-            self.client.close()
-            logger.info("MongoDB connection closed.")            
-
-        async with self.lock:
+            self.conn = sqlite3.connect(self.db_path)
+            self.conn.row_factory = sqlite3.Row  # To access columns by name
+            logger.info(f"Connected to SQLite database: {self.db_path}")
             cursor = self.conn.cursor()
-            
-            # Check if the info_embed_id column exists
-            cursor.execute("PRAGMA table_info(study_groups);")
-            columns = [column[1] for column in cursor.fetchall()]
 
-            # If info_embed_id column does not exist, add it
-            if 'info_embed_id' not in columns:
-                cursor.execute('ALTER TABLE study_groups ADD COLUMN info_embed_id INTEGER DEFAULT 0;')
-                logger.info("Added 'info_embed_id' column to 'study_groups' table.")
-            
-            ### STUDY GROUPS TABLE
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS study_groups (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,8 +34,6 @@ class DBHandler:
                 vc_id INTEGER DEFAULT 0,
                 text_id INTEGER DEFAULT 0,
                 info_embed_id INTEGER DEFAULT 0,
-                speak_enabled BOOLEAN DEFAULT 1,
-                video_mode TEXT CHECK( video_mode IN ('off', 'on', 'auto')) DEFAULT 'off',
                 video_timer INTEGER DEFAULT 10,
                 start_time REAL NOT NULL,
                 end_time REAL NOT NULL,
@@ -99,8 +44,7 @@ class DBHandler:
             ''')
             logger.info("Created 'study_groups' table.")
 
-            ### STUDY GROUP MEMBERS TABLE
-            cursor.execute("""
+            cursor.execute('''
                 CREATE TABLE IF NOT EXISTS study_groups_members (
                     group_id TEXT NOT NULL,
                     user_id INTEGER NOT NULL,
@@ -110,83 +54,69 @@ class DBHandler:
             ''')
             logger.info("Created 'study_groups_members' table.")
 
-            ### POMODORO TABLE
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS pomodoro_sessions (
                 id INTEGER PRIMARY KEY,
                 group_id TEXT,
                 current_stage TEXT CHECK(current_stage IN ('focus', 'short_break', 'long_break')) DEFAULT 'focus',
-                cycles INTEGER DEFAULT 0,
-                is_paused BOOLEAN DEFAULT 0,
-                timer INTEGER DEFAULT 0,
                 FOREIGN KEY (group_id) REFERENCES study_groups (group_id)
-                ON DELETE CASCADE
-                ON UPDATE CASCADE
-            
             )
             ''')
             logger.info("Created 'pomodoro_sessions' table.")
 
-            ### MANAGERS TABLE
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS managers (
-                id INTEGER PRIMARY KEY,
                 user_id INTEGER NOT NULL,
                 guild_id INTEGER,
-                permission_level INTEGER NOT NULL
+                permission_level INTEGER NOT NULL,
+                PRIMARY KEY (user_id, guild_id)
             )
             ''')
+
             logger.info("Created 'managers' table.")
 
-            ### VOICE CHANNEL LOGS
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS voice_channel_logs (
                 id INTEGER PRIMARY KEY,
                 group_id INTEGER,
                 channel_id INTEGER,
                 creator_id INTEGER,
-                create_time TIMESTAMP,
-                FOREIGN KEY (group_id) REFERENCES study_groups (id)
+                create_time REAL,
+                FOREIGN KEY (group_id) REFERENCES study_groups (id) ON DELETE CASCADE
             )
             ''')
             logger.info("Created 'voice_channel_logs' table.")
 
-            ### GUILD SETTINGS
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS guild_settings (
                 guild_id INTEGER PRIMARY KEY,
-                vc_cleanup_time INTEGER DEFAULT 600,
-                vc_category_id INTEGER
+                vc_cleanup_time INTEGER,
+                vc_category_id INTEGER,
+                logging_channel_id INTEGER
             )
             ''')
             logger.info("Created 'guild_settings' table.")
 
-            ### TASKS
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS tasks (
                 id INTEGER PRIMARY KEY,
-                user_id INTEGER NOT NULL,
-                guild_id INTEGER NOT NULL,
+                group_id TEXT NOT NULL,
                 description TEXT NOT NULL,
-                completed BOOLEAN NOT NULL DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                due_date TIMESTAMP,
+                completed INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL,
+                due_date REAL,
                 reminders_sent TEXT
             )
-''')
+            ''')
             logger.info("Created 'tasks' table.")
 
-            
-
-
-            ### CHECKIN SESSIONS TABLE
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS checkin_sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL UNIQUE,
                 guild_id INTEGER,
                 name TEXT NOT NULL,
-                creator_id INTEGER NOT NULL,
+                creator_id INTEGER,
                 owner_id INTEGER NOT NULL,
                 text_id INTEGER NOT NULL,
                 duration INTEGER NOT NULL,
@@ -196,340 +126,456 @@ class DBHandler:
                 reminder_count INTEGER NOT NULL,
                 last_reminder_message_id INTEGER NOT NULL DEFAULT 0,
                 active BOOLEAN DEFAULT 1
-
             )
             ''')
             logger.info("Created 'checkin_sessions' table.")
 
-            ### CHECKIN MEMBERS TABLE
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS checkin_members (
-               session_id TEXT NOT NULL,
-               member_id INTEGER NOT NULL,
-               status TEXT NOT NULL CHECK(status IN ('online', 'offline', 'afk', 'dnd')),
-               absences INTEGER NOT NULL DEFAULT 0,
-                FOREIGN KEY (session_id) REFERENCES checkin_sessions (session_id),
+                session_id TEXT NOT NULL,
+                member_id INTEGER NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES checkin_sessions (session_id) ON DELETE CASCADE,
                 PRIMARY KEY (session_id, member_id)
             )
             ''')
-            logger.info("Created 'study_groups_members' table.")
-            
-            ### STUDY GROUP MEMBERS TABLE
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS study_groups_members (
-                    group_id TEXT NOT NULL,
-                    user_id INTEGER NOT NULL,
-                    is_muted BOOLEAN DEFAULT 0,
-                    is_deafened BOOLEAN DEFAULT 0,
-                    in_vc BOOLEAN DEFAULT 0,
-                    present BOOLEAN DEFAULT 0,
-                    joined_at TIMESTAMP,
-                    FOREIGN KEY (group_id) REFERENCES study_groups (group_id),
-                    PRIMARY KEY (group_id, user_id)
-                )
             logger.info("Created 'checkin_members' table.")
 
-            self.conn.commit()
-            logger.info("Database tables created or verified.")
+            # Create indexes
+            logger.info("Database tables created.")
+        except sqlite3.Error as e:
+            logger.error(f"Error creating tables: {e}")
+            raise
 
-    async def close(self) -> None:  # noqa: F811
-        """Close the database connection."""
+    def __del__(self):
+        """Closes the database connection when the object is deleted."""
+        self.close()
+
+    def close(self) -> None:
+        """Closes the database connection."""
         if self.conn:
             self.conn.close()
             logger.info("Database connection closed.")
 
+            # Add indexes
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_study_groups_group_id ON study_groups (group_id)
+            ''')
+            logger.info("Created index on study_groups (group_id)")
+
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_study_groups_guild_id ON study_groups (guild_id)
+            ''')
+            logger.info("Created index on study_groups (guild_id)")
+
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_study_groups_members_group_id ON study_groups_members (group_id)
+            ''')
+            logger.info("Created index on study_groups_members (group_id)")
+
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_study_groups_members_user_id ON study_groups_members (user_id)
+            ''')
+            logger.info("Created index on study_groups_members (user_id)")
+
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_pomodoro_sessions_group_id ON pomodoro_sessions (group_id)
+            ''')
+            logger.info("Created index on pomodoro_sessions (group_id)")
+
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_voice_channel_logs_group_id ON voice_channel_logs (group_id)
+            ''')
+            logger.info("Created index on voice_channel_logs (group_id)")
+
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_voice_channel_logs_channel_id ON voice_channel_logs (channel_id)
+            ''')
+            logger.info("Created index on voice_channel_logs (channel_id)")
+
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_guild_settings_guild_id ON guild_settings (guild_id)
+            ''')
+            logger.info("Created index on guild_settings (guild_id)")
+
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks (user_id)
+            ''')
+            logger.info("Created index on tasks (user_id)")
+
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_checkin_sessions_session_id ON checkin_sessions (session_id)
+            ''')
+            logger.info("Created index on checkin_sessions (session_id)")
+
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_checkin_sessions_guild_id ON checkin_sessions (guild_id)
+            ''')
+            logger.info("Created index on checkin_sessions (guild_id)")
+
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_checkin_members_session_id ON checkin_members (session_id)
+            ''')
+            logger.info("Created index on checkin_members (session_id)")
+
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_managers_user_id ON managers (user_id)
+            ''')
+            logger.info("Created index on managers (user_id)")
+
     ### --- STUDY GROUP DB OPERATIONS --- ###
-    async def save_study_group(self, study_group_data: Dict[str, Any]) -> str:
-        async with self.lock:
-                cursor = self.conn.cursor()  # Generate a unique group ID
-                cursor.execute('''
+
+    async def save_study_group(self, study_group_data: Dict[str, Any]) -> int:
+        """Saves a study group to the database.
+        """
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('''
                 INSERT INTO study_groups (
-                    guild_id, name, group_id, creator_id, owner_id, category_id, 
-                    max_members, group_role_id, vc_id, text_id, info_embed_id, 
-                    speak_enabled, video_mode, video_timer, 
-                    start_time, end_time, duration, active
-                    is_permanent
-                ) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-                ''', (
-                    study_group_data["guild_id"],
-                    study_group_data["name"],
-                    study_group_data["group_id"],
-                    study_group_data["creator_id"],         
-                    study_group_data["owner_id"],
-                    study_group_data["category_id"],
-                    study_group_data["max_members"],
-                    study_group_data["group_role_id"],
-                    study_group_data["vc_id"],
-                    study_group_data["text_id"],
-                    study_group_data["info_embed_id"],
-                    study_group_data["speak_enabled"],
-                    study_group_data["video_mode"],
-                    study_group_data["video_timer"],
-                    study_group_data["start_time"],
-                    study_group_data["end_time"],
-                    study_group_data["duration"],
-                    study_group_data["active"],
-                    study_group_data["is_permanent"]
-                ))            
-                study_group_id = cursor.lastrowid
-                self.conn.commit()
-                logger.info(f"Study group '{study_group_data['name']}' created with ID {study_group_data['group_id']}")
-                return study_group_id 
-        
-    async def update_member_study_group(self, group_id : str, user_id : int, present : bool = False, in_vc : bool = False):
-        async with self.lock:
+                    guild_id, group_id, name, creator_id, owner_id, category_id, max_members, group_role_id, vc_id, text_id, info_embed_id, video_timer, start_time, end_time, duration, active, is_permanent)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                study_group_data["guild_id"],
+                study_group_data["group_id"],
+                study_group_data["name"],                
+                study_group_data["creator_id"],
+                study_group_data["owner_id"],
+                study_group_data["category_id"],
+                study_group_data["max_members"],
+                study_group_data["group_role_id"],
+                study_group_data["vc_id"],
+                study_group_data["text_id"],
+                study_group_data["info_embed_id"],
+                study_group_data["start_time"],
+                study_group_data["end_time"],
+                study_group_data["duration"],
+                study_group_data["active"],
+                study_group_data["is_permanent"]
+            ))
+            study_group_id = cursor.lastrowid
+            logger.info(f"Study group '{study_group_data['name']}' created with ID {study_group_data['group_id']}")            
+            return study_group_id
+        except sqlite3.Error as e:
+            logger.error(f"Error saving study group '{study_group_data['name']}': {e}")
+            raise
+
+    async def update_member_study_group(self, group_id: str, user_id: int) -> None:
+        """Updates a member's status in a study group."""
+        try:
             cursor = self.conn.cursor()
-            current_time = datetime.now().isoformat()  # Format the current time as an ISO 8601 string
+            cursor.execute('''
+                INSERT OR IGNORE INTO study_groups_members (group_id, user_id)
+                VALUES (?, ?)
+            ''', (group_id, user_id))            
+            logger.info(f"Updated member {user_id} in study group {group_id}")
+        except sqlite3.Error as e:
+            logger.error(f"Error updating member {user_id} in study group {group_id}: {e}")
+            raise
 
-            # Determine if we need to perform an insert or an update
-            cursor.execute("SELECT 1 FROM study_groups_members WHERE group_id = ? AND user_id = ?", (group_id, user_id))
-            exists = cursor.fetchone()
+    async def update_study_group(self, study_group_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Updates a study group in the database.
 
-            if exists:
-                # Update if record exists
-                cursor.execute("""
-                    UPDATE study_groups_members SET present = ?, in_vc = ? WHERE group_id = ? AND user_id = ?
-                """, (present, in_vc, group_id, user_id))
-            else:
-                # Insert if record does not exist
-                cursor.execute("""
-                    INSERT INTO study_groups_members (group_id, user_id, present, in_vc, joined_at) VALUES (?, ?, ?, ?, ?)
-                """, (group_id, user_id, present, in_vc, current_time))
+        Args:
+            study_group_data (Dict[str, Any]): Dictionary containing the update data.
 
-            self.conn.commit()
-            logger.info(f"Updated member {user_id} in study group {group_id}: present={present}, in_vc={in_vc}")
+        Returns:
+            Optional[Dict[str, Any]]: The updated study group data or None if not found.
+        """
+        try:
+            fields_to_update = []
+            values = []
 
+            if "name" in study_group_data:
+                fields_to_update.append("name = ?")
+                values.append(study_group_data["name"])
 
-    ### Update Study Group
-        # List of fields to update dynamically
-        fields_to_update = []
-        values = []
+            if "owner_id" in study_group_data:
+                fields_to_update.append("owner_id = ?")
+                values.append(study_group_data["owner_id"])
 
-        # Append fields only if they are present in the passed data
-        if "name" in study_group_data:
-            fields_to_update.append("name = ?")
-            values.append(study_group_data["name"])
-        
-        if "owner_id" in study_group_data:
-            fields_to_update.append("owner_id = ?")
-            values.append(study_group_data["owner_id"])
-        
-        if "category_id" in study_group_data:
-            fields_to_update.append("category_id = ?")
-            values.append(study_group_data["category_id"])
-        
-        if "max_members" in study_group_data:
-            fields_to_update.append("max_members = ?")
-            values.append(study_group_data["max_members"])
+            if "category_id" in study_group_data:
+                fields_to_update.append("category_id = ?")
+                values.append(study_group_data["category_id"])
 
-        if "group_role_id" in study_group_data:
-            fields_to_update.append("group_role_id = ?")
-            values.append(study_group_data["group_role_id"])
+            if "max_members" in study_group_data:
+                fields_to_update.append("max_members = ?")
+                values.append(study_group_data["max_members"])
 
-        if "text_id" in study_group_data:
-            fields_to_update.append("text_id = ?")
-            values.append(study_group_data["text_id"])
-        
-        if "info_embed_id" in study_group_data:
-            fields_to_update.append("info_embed_id = ?")
-            values.append(study_group_data["info_embed_id"])
+            if "group_role_id" in study_group_data:
+                fields_to_update.append("group_role_id = ?")
+                values.append(study_group_data["group_role_id"])
 
-        if "vc_id" in study_group_data:
-            fields_to_update.append("vc_id = ?")
-            values.append(study_group_data["vc_id"])
+            if "text_id" in study_group_data:
+                fields_to_update.append("text_id = ?")
+                values.append(study_group_data["text_id"])
 
-        if "start_time" in study_group_data:
-            fields_to_update.append("start_time = ?")
-            values.append(study_group_data["start_time"])
+            if "info_embed_id" in study_group_data:
+                fields_to_update.append("info_embed_id = ?")
+                values.append(study_group_data["info_embed_id"])
 
-        if "duration" in study_group_data:
-            fields_to_update.append("duration = ?")
-            values.append(study_group_data["duration"])
+            if "vc_id" in study_group_data:
+                fields_to_update.append("vc_id = ?")
+                values.append(study_group_data["vc_id"])
 
-        if "end_time" in study_group_data:
-            fields_to_update.append("end_time = ?")
-            values.append(study_group_data["end_time"])
+            if "end_time" in study_group_data:
+                fields_to_update.append("end_time = ?")
+                values.append(study_group_data["end_time"])
 
-        if "speak_enabled" in study_group_data:
-            fields_to_update.append("speak_enabled = ?")
-            values.append(study_group_data["speak_enabled"])
+            if "speak_enabled" in study_group_data:
+                fields_to_update.append("speak_enabled = ?")
+                values.append(study_group_data["speak_enabled"])
 
-        if "video_mode" in study_group_data:
-            fields_to_update.append("video_mode = ?")
-            values.append(study_group_data["video_mode"])
+            if "active" in study_group_data:
+                fields_to_update.append("active = ?")
+                values.append(study_group_data["active"])
 
-        if "video_timer" in study_group_data:
-            fields_to_update.append("video_timer = ?")
-            values.append(study_group_data["video_timer"])
+            if "is_permanent" in study_group_data:
+                fields_to_update.append("is_permanent = ?")
+                values.append(study_group_data["is_permanent"])
 
-        if "active" in study_group_data:
-            fields_to_update.append("active = ?")
-            values.append(study_group_data["active"])
-        
-        if "is_permanent" in study_group_data:
-            fields_to_update.append("is_permanent = ?")
-            values.append(study_group_data["is_permanent"])
-
-        if not fields_to_update:
-            logger.warning("No fields to update for the study group.")
-            return
-
-
-        values.append(study_group_data["group_id"])
-
-        # Construct the SQL query dynamically based on the fields to update
-        query = f"UPDATE study_groups SET {', '.join(fields_to_update)} WHERE group_id = ?"
-
-        # Execute the dynamically generated query
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute(query, values)
-            self.conn.commit()
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT * FROM study_groups WHERE group_id = ?', (group_id,))
-            group = cursor.fetchone()
-            if group:
-                logger.debug(f"Fetched StudyGroup {group_id}: Found.")
-                return dict(group)
-            else:
-                logger.debug(f"Fetched StudyGroup {group_id}: Not found.")
+            if not fields_to_update:
+                logger.warning("No fields to update for the study group.")
                 return None
 
-    ### Fetch Study Group by GROUP ID
-    async def fetch_study_group_by_id(self, group_id: str) -> Optional[Dict[str, Any]]:  # noqa: F811
-        """Fetch a study group by its group_id."""
-        async with self.lock:
+            values.append(study_group_data["group_id"])
+            query = f"UPDATE study_groups SET {', '.join(fields_to_update)} WHERE group_id = ?"
+
             cursor = self.conn.cursor()
-            cursor.execute("SELECT * FROM study_groups WHERE group_id = ?", (group_id,))
+            cursor.execute(query, values)
+
+            cursor.execute(
+                'SELECT * FROM study_groups WHERE group_id = ?', (study_group_data["group_id"],))
+            group = cursor.fetchone()
+            if group:
+                logger.debug(
+                    f"Fetched StudyGroup {study_group_data['group_id']}: Found.")
+                return dict(group)
+            else:
+                logger.debug(
+                    f"Fetched StudyGroup {study_group_data['group_id']}: Not found.")
+                return None
+        except sqlite3.Error as e:
+            logger.error(
+                f"Error updating study group {study_group_data['group_id']}: {e}")
+            raise
+
+    async def fetch_study_group_by_id(self, group_id: str) -> Optional[Dict[str, Any]]:
+        """Fetches a study group by its group_id.
+
+        Args:
+            group_id (str): The ID of the study group to fetch.
+
+        Returns:
+            Optional[Dict[str, Any]]: The study group data or None if not found.
+        """
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT * FROM study_groups WHERE group_id = ?", (group_id,))            
             study_group = cursor.fetchone()
             return dict(study_group) if study_group else None
-    
-    ### Fetch Study Group by NAME (and GUILD ID)
-    async def fetch_study_group_by_name(self, name: str, guild_id: int) -> Optional[Dict[str, Any]]:
-        """Fetch a study group by its name and guild ID."""
-        async with self.lock:
+        except sqlite3.Error as e:
+            logger.error(f"Error fetching study group with ID '{group_id}': {e}")
+            raise
+
+    def fetch_study_group_by_name(self, name: str, guild_id: int) -> Optional[Dict[str, Any]]:
+        """Fetches a study group by its name and guild ID.
+
+        Args:
+            name (str): The name of the study group to fetch.
+            guild_id (int): The ID of the guild.
+
+        Returns:
+            Optional[Dict[str, Any]]: The study group data or None if not found.
+        """
+        try:
             cursor = self.conn.cursor()
             cursor.execute('SELECT * FROM study_groups WHERE name = ? AND guild_id = ?', (name, guild_id))
             group = cursor.fetchone()
             if group:
-                logger.debug(f"Fetched StudyGroup by name '{name}' and guild_id '{guild_id}': Found.")
+                logger.debug(
+                    f"Fetched StudyGroup by name '{name}' and guild_id '{guild_id}': Found.")
                 return dict(group)
             else:
-                logger.debug(f"Fetched StudyGroup by name '{name}' and guild_id '{guild_id}': Not found.")
+                logger.debug(
+                    f"Fetched StudyGroup by name '{name}' and guild_id '{guild_id}': Not found.")
                 return None
+        except sqlite3.Error as e:
+            logger.error(
+                f"Error fetching study group with name '{name}' in guild {guild_id}: {e}")
+            raise
 
+    def remove_member_from_study_group_db(self, group_id: str, user_id: int) -> None:
+        """Removes a member from a study group.
 
-
-
-
-    ### Add Member to Study Group by Group ID
-    async def add_member_to_study_group_db(self, group_id: str, user_id: int) -> None:
-        async with self.lock:
+        Args:
+            group_id (str): The ID of the study group.
+            user_id (int): The ID of the user to remove.
+        """
+        try:
             cursor = self.conn.cursor()
-            cursor.execute('''
-            INSERT OR IGNORE INTO study_group_members (group_id, user_id)
-            VALUES (?, ?)
-            ''', (group_id, user_id))
-            self.conn.commit()
+            cursor.execute(
+                "DELETE FROM study_groups_members WHERE group_id = ? AND user_id = ?", (group_id, user_id))            
+            logger.info(
+                f"Removed member {user_id} from study group {group_id}.")
+        except sqlite3.Error as e:
+            logger.error(
+                f"Error removing member {user_id} from study group {group_id}: {e}")
+            raise
 
+    def transfer_ownership_study_group_db(self, group_id: str, new_owner_id: int) -> None:
+        """Transfers ownership of a study group to a new owner.
 
-    ### Remove Member from Study Group by Group ID
-    async def remove_member_from_study_group_db(self, group_id: str, user_id: int) -> None:
-        async with self.lock:
+        Args:
+            group_id (str): The ID of the study group.
+            new_owner_id (int): The ID of the new owner.
+        """
+        try:
             cursor = self.conn.cursor()
-            cursor.execute("""
-            DELETE FROM group_members WHERE group_id = ? AND user_id = ?
-            ''', (group_id, user_id))
-            self.conn.commit()
-            logger.info(f"Removed member {user_id} from StudyGroup {group_id}.")
-
-
-    ### Transfer Study Group Ownership, using Group ID
-    async def transfer_ownership_study_group_db(self, group_id: str, new_owner_id: int) -> None:
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('''
-            UPDATE study_groups SET owner_id = ? WHERE group_id = ?
+            cursor.execute('''                
+                UPDATE study_groups SET owner_id = ? WHERE group_id = ?
             ''', (new_owner_id, group_id))
-            self.conn.commit()
-            logger.info(f"Ownership of StudyGroup {group_id} transferred to {new_owner_id}.")
+            logger.info(
+                f"Ownership of StudyGroup {group_id} transferred to {new_owner_id}.")
+        except sqlite3.Error as e:
+            logger.error(
+                f"Error transferring ownership of study group {group_id} to {new_owner_id}: {e}")
+            raise
 
+    def fetch_members_of_group(self, group_id: str) -> List[int]:
+        """Fetches all members of a study group.
 
-    ### Fetch Study Group Members from Group ID
-    async def fetch_members_of_group(self, group_id: str) -> List[int]:
-        async with self.lock:
+        Args:
+            group_id (str): The ID of the study group.
+
+        Returns:
+            List[int]: A list of user IDs of the members.
+        """
+        try:
             cursor = self.conn.cursor()
-            cursor.execute('SELECT user_id FROM group_members WHERE group_id = ?', (group_id,))
+            cursor.execute(
+                'SELECT user_id FROM study_groups_members WHERE group_id = ?', (group_id,))
             members_ids = [row['user_id'] for row in cursor.fetchall()]
-            logger.debug(f"Fetched {len(members_ids)} members for StudyGroup {group_id}.")
+            logger.debug(
+                f"Fetched {len(members_ids)} members for study group {group_id}.")
             return members_ids
+        except sqlite3.Error as e:
+            logger.error(
+                f"Error fetching members of study group {group_id}: {e}")
+            raise
+    
+    def fetch_owner_of_group(self, group_id: str) -> Optional[int]:
+        """Fetches the owner of a study group.
 
+        Args:
+            group_id (str): The ID of the study group.
 
-    ### Fetch Owner of Group by Group ID
-    async def fetch_owner_of_group(self, group_id: str) -> Optional[int]:
-        async with self.lock:
+        Returns:
+            Optional[int]: The user ID of the owner or None if not found.
+        """
+        try:
             cursor = self.conn.cursor()
-            cursor.execute('SELECT owner_id FROM study_groups WHERE group_id = ?', (group_id,))
+            cursor.execute(
+                'SELECT owner_id FROM study_groups WHERE group_id = ?', (group_id,))
             owner = cursor.fetchone()
-            logger.debug(f"Fetched owner for Study Group {group_id}: {owner['owner_id'] if owner else 'Not found'}.")
+            logger.debug(
+                f"Fetched owner for study group {group_id}: {owner['owner_id'] if owner else 'Not found'}.")
             return owner['owner_id'] if owner else None
+        except sqlite3.Error as e:
+            logger.error(
+                f"Error fetching owner of study group {group_id}: {e}")
+            raise
+    
+    async def delete_study_group(self, group_id: int) -> None:
+        """Deletes a study group.
 
-    ### Delete Study Group
-    async def delete_study_group(self, group_id : int):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('DELETE FROM study_groups WHERE id = ?', (group_id,))
-            cursor.execute('DELETE FROM group_members WHERE group_id = ?', (group_id,))
-            self.conn.commit()
+        Args:
+            group_id (int): The ID of the study group to delete.
+        """
+        try:
+            cursor = self.conn.cursor()            
+            cursor.execute("DELETE FROM study_groups WHERE id = ?", (group_id,))            
+            cursor.execute("DELETE FROM study_groups_members WHERE group_id = ?", (group_id,))
+            logger.info(f"Deleted study group with ID {group_id}")            
+        except sqlite3.Error as e:
+            logger.error(
+                f"Error deleting study group with id {group_id}: {e}")
+            raise
 
+    def get_study_groups_of_user(self, user_id: int, guild_id: int) -> List[sqlite3.Row]:
+        """Gets all study groups a user is in, within a specific guild.
 
-    ### Get Groups the User is in (Fetches multiple groups per user)
-    async def get_study_groups_of_user(self, user_id : int, guild_id : int):
-        async with self.lock:
+        Args:
+            user_id (int): The ID of the user.
+            guild_id (int): The ID of the guild.
+
+        Returns:
+            List[sqlite3.Row]: A list of study groups.
+        """
+        try:
             cursor = self.conn.cursor()
             cursor.execute('''
                 SELECT study_groups.* 
                 FROM study_groups
                 JOIN study_groups_members ON study_groups.group_id = study_groups_members.group_id
-                WHERE study_group_members.user_id = ? AND study_groups.guild_id = ?
+                WHERE study_groups_members.user_id = ? AND study_groups.guild_id = ?
             ''', (user_id, guild_id))
-            groups = cursor.fetchall()  # Fetch all groups within the guild
-            logger.debug(f"Retrieved {len(groups)} group(s) for user {user_id} in guild {guild_id}.\n The groups are: {[group.name for group in groups]}")
+            groups = cursor.fetchall()
+            logger.debug(
+                f"Retrieved {len(groups)} group(s) for user {user_id} in guild {guild_id}.")
             return groups
+        except sqlite3.Error as e:
+            logger.error(
+                f"Error getting study groups for user {user_id} in guild {guild_id}: {e}")
+            raise
 
-    async def get_all_study_groups_of_guild(self, guild_id : int):
-        async with self.lock:
-            try:
-                cursor = self.conn.cursor()
-                cursor.execute('SELECT * FROM study_groups WHERE guild_id = ?', (guild_id,))
-                groups = cursor.fetchall()
+    def get_all_study_groups_of_guild(self, guild_id: int) -> List[Dict[str, Any]]:
+        """Gets all study groups in a specific guild.
 
-                # Convert each row to a dictionary
-                groups_as_dicts = [dict(group) for group in groups]
-                
-                logger.debug(f"Retrieved {len(groups_as_dicts)} study groups for guild {guild_id}")
-                return groups_as_dicts
-            except Exception as e:
-                logger.error(f"Error fetching study groups for guild {guild_id}: {e}")
-                return []
-    async def get_member_study_group(self, user_id : int, group_id : str):
+        Args:
+            guild_id (int): The ID of the guild.
+
+        Returns:
+            List[Dict[str, Any]]: A list of study groups.
+        """
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                'SELECT * FROM study_groups WHERE guild_id = ?', (guild_id,))
+            groups = cursor.fetchall()
+            groups_as_dicts = [dict(group) for group in groups]
+            logger.debug(
+                f"Retrieved {len(groups_as_dicts)} study groups for guild {guild_id}")
+            return groups_as_dicts
+        except sqlite3.Error as e:
+            logger.error(
+                f"Error fetching study groups for guild {guild_id}: {e}")
+            return []
+
+    def get_member_study_group(self, user_id : int, group_id : str):
+        """Gets a specific study groups from a user.
+
+        Args:
+            user_id (int): The ID of the user.
+            group_id (str): The ID of the group.
+        """
         pass
+
     ### --- CHECKIN SESSION DB OPERATIONS --- ###
 
+    def save_checkin_session(self, session_data: Dict[str, Any]) -> None:
+        """Saves a new check-in session to the database.
 
-    ## Save Check-in Session
-    async def save_checkin_session(self, session_data: Dict[str, Any]) -> None:
-        """Insert a new check-in session into the database."""
-        async with self.lock:
+        Args:
+            session_data (Dict[str, Any]): Dictionary containing check-in session data.
+        """
+        try:
             cursor = self.conn.cursor()
             cursor.execute('''
-            INSERT INTO checkin_sessions (
-                session_id, guild_id, name, creator_id, owner_id, text_id, 
-                duration, start_time, last_reminder_time, next_reminder_time, reminder_count, last_reminder_message_id, active
-            ) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO checkin_sessions (
+                    session_id, guild_id, name, creator_id, owner_id, text_id, 
+                    duration, start_time, last_reminder_time, next_reminder_time, 
+                    reminder_count, last_reminder_message_id, active
+                ) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 session_data["session_id"],
                 session_data["guild_id"],
@@ -545,19 +591,23 @@ class DBHandler:
                 session_data["last_reminder_message_id"],
                 session_data["active"]
             ))
-            self.conn.commit()
-            logger.info(f"Check-in session '{session_data['name']}' created with ID {session_data['session_id']}.")
-    
-    
-    ## Update Check-in Session
-    async def update_checkin_session(self, session_data: Dict[str, Any]) -> None:
-        """Update an existing check-in session in the database by session ID."""
-        async with self.lock:
+            logger.info(
+                f"Check-in session '{session_data['name']}' created with ID {session_data['session_id']}.")
+        except sqlite3.Error as e:
+            logger.error(f"Error saving check-in session: {e}")
+            raise
+
+    def update_checkin_session(self, session_data: Dict[str, Any]) -> None:
+        """Updates an existing check-in session in the database by session ID.
+
+        Args:
+            session_data (Dict[str, Any]): Dictionary containing the update data.
+        """
+        try:
             cursor = self.conn.cursor()
             update_fields = []
             update_values = []
 
-            # Dynamically build the query based on which fields are in session_data
             if "last_reminder_time" in session_data:
                 update_fields.append("last_reminder_time = ?")
                 update_values.append(session_data["last_reminder_time"])
@@ -573,257 +623,69 @@ class DBHandler:
             if "last_reminder_message_id" in session_data:
                 update_fields.append("last_reminder_message_id = ?")
                 update_values.append(session_data["last_reminder_message_id"])
-                
+
             if "active" in session_data:
                 update_fields.append("active = ?")
                 update_values.append(session_data["active"])
 
-            # Ensure that we're updating only the necessary fields
             if update_fields:
-                update_values.append(session_data["session_id"])  # Add session_id for the WHERE clause
+                update_values.append(
+                    session_data["session_id"])  # Add session_id for the WHERE clause
                 query = f"UPDATE checkin_sessions SET {', '.join(update_fields)} WHERE session_id = ?"
-                cursor.execute(query, update_values)
-                self.conn.commit()
+                cursor.execute(query, update_values)                
 
-            logger.info(f"Check-in session '{session_data['session_id']}' updated in the database.")
+            logger.info(
+                f"Check-in session '{session_data['session_id']}' updated in the database.")
+        except sqlite3.Error as e:
+            logger.error(f"Error updating check-in session: {e}")
+            raise
 
-    
-    ## Fetch Check-in Session by Session ID
-    async def fetch_checkin_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Fetch a check-in session from the database by session ID."""
-        async with self.lock:
+    def fetch_checkin_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Fetches a check-in session from the database by session ID.
+
+        Args:
+            session_id (str): The ID of the check-in session to fetch.
+
+        Returns:
+            Optional[Dict[str, Any]]: The check-in session data or None if not found.
+        """
+        try:
             cursor = self.conn.cursor()
-            cursor.execute('SELECT * FROM checkin_sessions WHERE session_id = ?', (session_id,))
+            cursor.execute(
+                'SELECT * FROM checkin_sessions WHERE session_id = ?', (session_id,))
             session = cursor.fetchone()
-            logger.debug(f"Fetched check-in session {session_id}: {'Found' if session else 'Not found'}.")
+            logger.debug(
+                f"Fetched check-in session {session_id}: {'Found' if session else 'Not found'}.")
             return dict(session) if session else None
+        except sqlite3.Error as e:
+            logger.error(
+                f"Error fetching check-in session {session_id}: {e}")
+            raise
 
+    def add_or_update_checkin_member(self, session_id: str, member_id: int, status: str, absences: int = 0) -> None:
+        """Inserts or updates a member's status in a check-in session.
 
-    ## Add or Update Check-in Member
-    async def add_or_update_checkin_member(self, session_id: str, member_id: int, status: str, absences: int = 0) -> None:
-        """Insert or update a member's status in a check-in session."""
-        async with self.lock:
+        Args:
+            session_id (str): The ID of the check-in session.
+            member_id (int): The ID of the member.
+            status (str): The status of the member.
+            absences (int, optional): The number of absences for the member. Defaults to 0.
+        """
+        try:
             cursor = self.conn.cursor()
             cursor.execute('''
-            INSERT INTO checkin_members (session_id, member_id, status, absences)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(session_id, member_id) DO UPDATE SET
-                status = excluded.status,
-                absences = excluded.absences
+                INSERT INTO checkin_members (session_id, member_id, status, absences)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(session_id, member_id) DO UPDATE SET
+                    status = excluded.status,
+                    absences = excluded.absences
             ''', (session_id, member_id, status, absences))
-            self.conn.commit()
-            logger.info(f"Updated member {member_id} in check-in session {session_id} with status '{status}' and absences {absences}.")
+            logger.info(
+                f"Updated member {member_id} in check-in session {session_id} with status '{status}' and absences {absences}.")
+        except sqlite3.Error as e:
+            logger.error(
+                f"Error updating member {member_id} in check-in session {session_id}: {e}")
+            raise
 
-
-    ## Fetch Check-in Members by Session ID
-    async def fetch_checkin_members(self, session_id: str) -> List[Dict[str, Any]]:
-        """Fetch all members in a check-in session."""
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT * FROM checkin_members WHERE session_id = ?', (session_id,))
-            members = cursor.fetchall()
-            logger.debug(f"Fetched {len(members)} members for check-in session {session_id}.")
-            return [dict(member) for member in members]
-
-
-    ## Fetch Active Check-in Sessions
-    async def fetch_active_checkin_sessions(self) -> List[Dict[str, Any]]:
-        """
-        Fetch all active check-in sessions from the database.
-        Returns a list of active sessions with all relevant session data.
-        """
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT * FROM checkin_sessions WHERE active = 1')
-            sessions = cursor.fetchall()
-            logger.debug(f"Fetched {len(sessions)} active check-in sessions.")
-            return [dict(session) for session in sessions]
-
-
-    ## Delete Check-in Session
-    async def delete_checkin_session(self, session_id: str) -> None:
-        """Remove a check-in session and its members from the database."""
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('DELETE FROM checkin_members WHERE session_id = ?', (session_id,))
-            cursor.execute('DELETE FROM checkin_sessions WHERE session_id = ?', (session_id,))
-            self.conn.commit()
-            logger.info(f"Deleted check-in session with ID: {session_id}.")
-
-
-    async def update_group_roles(self, group_id, admin_role_id, session_role_id):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('''
-            UPDATE study_groups
-            SET admin_role_id = ?, session_role_id = ?
-            WHERE id = ?
-            ''', (admin_role_id, session_role_id, group_id))
-            self.conn.commit()
-            logger.info(f"Updated roles for group {group_id}: admin_role_id={admin_role_id}, session_role_id={session_role_id}")
-
-    async def get_group_roles(self, group_id):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT admin_role_id, session_role_id FROM study_groups WHERE id = ?', (group_id,))
-            roles = cursor.fetchone()
-            logger.debug(f"Retrieved roles for group {group_id}: {roles}")
-            return roles
-
-    async def update_voice_channel(self, group_id, voice_channel_id):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('''
-            UPDATE study_groups
-            SET voice_channel_id = ?
-            WHERE id = ?
-            ''', (voice_channel_id, group_id))
-            self.conn.commit()
-            logger.info(f"Updated voice channel for group {group_id}: voice_channel_id={voice_channel_id}")
-
-    async def log_vc_creation(self, group_id, channel_id, creator_id):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('''
-            INSERT INTO voice_channel_logs (group_id, channel_id, creator_id, create_time)
-            VALUES (?, ?, ?, ?)
-            ''', (group_id, channel_id, creator_id, datetime.now()))
-            self.conn.commit()
-            logger.info(f"Logged voice channel creation: group={group_id}, channel={channel_id}, creator={creator_id}")
-
-    async def get_vc_logs(self, guild_id, start_date):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('''
-            SELECT channel_id, creator_id, create_time FROM voice_channel_logs
-            JOIN study_groups ON voice_channel_logs.group_id = study_groups.id
-            WHERE study_groups.guild_id = ? AND create_time >= ?
-            ''', (guild_id, start_date))
-            logs = cursor.fetchall()
-            logger.debug(f"Retrieved {len(logs)} VC logs for guild {guild_id} since {start_date}")
-            return logs
-
-    async def update_vc_cleanup_time(self, guild_id, cleanup_time):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('''
-            INSERT OR REPLACE INTO guild_settings (guild_id, vc_cleanup_time)
-            VALUES (?, ?)
-            ''', (guild_id, cleanup_time))
-            self.conn.commit()
-            logger.info(f"Updated VC cleanup time for guild {guild_id}: {cleanup_time} seconds")
-
-    async def get_vc_cleanup_time(self, guild_id):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT vc_cleanup_time FROM guild_settings WHERE guild_id = ?', (guild_id,))
-            result = cursor.fetchone()
-            cleanup_time = result['vc_cleanup_time'] if result else 600
-            logger.debug(f"Retrieved VC cleanup time for guild {guild_id}: {cleanup_time} seconds")
-            return cleanup_time
-
-    async def update_vc_category(self, guild_id, category_id):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('''
-            INSERT OR REPLACE INTO guild_settings (guild_id, vc_category_id)
-            VALUES (?, ?)
-            ''', (guild_id, category_id))
-            self.conn.commit()
-            logger.info(f"Updated VC category for guild {guild_id}: category_id={category_id}")
-
-    async def get_vc_category(self, guild_id):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT vc_category_id FROM guild_settings WHERE guild_id = ?', (guild_id,))
-            result = cursor.fetchone()
-            category_id = result['vc_category_id'] if result else None
-            logger.debug(f"Retrieved VC category for guild {guild_id}: {category_id}")
-            return category_id
-
-    async def add_manager(self, user_id, guild_id, permission_level):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('''
-            INSERT OR REPLACE INTO managers (user_id, guild_id, permission_level)
-            VALUES (?, ?, ?)
-            ''', (user_id, guild_id, permission_level))
-            self.conn.commit()
-            logger.info(f"Added/Updated manager: user={user_id}, guild={guild_id}, permission_level={permission_level}")
-
-    async def remove_manager(self, user_id, guild_id):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('DELETE FROM managers WHERE user_id = ? AND guild_id = ?', (user_id, guild_id))
-            self.conn.commit()
-            logger.info(f"Removed manager: user={user_id}, guild={guild_id}")
-
-    async def get_manager(self, user_id, guild_id):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT * FROM managers WHERE user_id = ? AND (guild_id = ? OR guild_id IS NULL)', (user_id, guild_id))
-            manager = cursor.fetchone()
-            logger.debug(f"Retrieved manager info for user {user_id} in guild {guild_id}: {'Found' if manager else 'Not found'}")
-            return manager
-
-    async def get_all_managers(self, guild_id):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT * FROM managers WHERE guild_id = ? OR guild_id IS NULL', (guild_id,))
-            managers = cursor.fetchall()
-            logger.debug(f"Retrieved {len(managers)} managers for guild {guild_id}")
-            return managers
-
-    async def add_task(self, user_id, guild_id, description, due_date=None):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            if due_date:
-                cursor.execute('''
-                    INSERT INTO tasks (user_id, guild_id, description, due_date, reminders_sent)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (user_id, guild_id, description, due_date, ''))
-            else:
-                cursor.execute('''
-                    INSERT INTO tasks (user_id, guild_id, description)
-                    VALUES (?, ?, ?)
-                ''', (user_id, guild_id, description))
-                
-    async def edit_task(self, task_id: int, description: str, due_date: Optional[datetime] = None):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            if due_date:
-                cursor.execute('''
-                    UPDATE tasks
-                    SET description = ?, due_date = ?
-                    WHERE id = ?
-                ''', (description, due_date, task_id))
-            else:
-                cursor.execute('''
-                    UPDATE tasks
-                    SET description = ?
-                    WHERE id = ?
-                ''', (description, task_id))
-            task_id = cursor.lastrowid
-            self.conn.commit()
-            logger.info(f"Added task for user {user_id}: ID={task_id}, description='{description}'")
-            return task_id
-
-    async def complete_task(self, user_id, task_id):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('''
-            UPDATE tasks SET completed = 1
-            WHERE id = ? AND user_id = ?
-            ''', (task_id, user_id))
-            self.conn.commit()
-            success = cursor.rowcount > 0
-            logger.info(f"{'Completed' if success else 'Failed to complete'} task {task_id} for user {user_id}")
-            return success
-
-    async def get_user_tasks(self, user_id):
-        async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT * FROM tasks WHERE user_id = ?', (user_id,))
-            tasks = cursor.fetchall()
-            logger.debug(f"Retrieved {len(tasks)} tasks for user {user_id}")
-            return tasks
+    def fetch_checkin_members(self, session_id: str) -> List[Dict[str, Any]]:
+        """Fetches all members in a check-in session."""
