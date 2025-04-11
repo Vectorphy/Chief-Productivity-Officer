@@ -4,15 +4,12 @@ from discord.ext import commands
 from datetime import datetime, timedelta
 from utils import parse_duration, parse_mentions, parse_seconds_to_hms, validate_parameters
 import asyncio
-import logging
 import random
 import uuid
 import sys
 from discord.ui import Button, View
 from typing import List, Dict, Optional
-from database import DBHandler
 from enum import Enum
-
 # Setting up basic configuration for logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -31,18 +28,38 @@ class CheckinSession:
     max_members = 10  # 10 members are allowed max
     max_absences = 3  # max absences are 3
     prompt_messages = [
-            "How's your progress?",
-            "Any updates on your task?",
-            "What have you achieved so far?",
-            "Let's hear about your current status!",
-            "How are things going?",
-            "How is your work progressing?",
-            "What have you done since the last check-in?",
-            "What's your status?",
-            "Any progress to report?"
-        ]
+        "How's your progress?",
+        "Any updates on your task?",
+        "What have you achieved so far?",
+        "Let's hear about your current status!",
+        "How are things going?",
+        "How is your work progressing?",
+        "What have you done since the last check-in?",
+        "What's your status?",
+        "Any progress to report?"
+    ]
 
-    def __init__(self, db : DBHandler, cog : 'CheckinCog', interaction : discord.Interaction, name : str, member_ids: List[int], duration : int):
+    def __init__(self,
+                 db,
+                 cog: 'CheckinCog', 
+                 interaction: discord.Interaction, 
+                 name: str, 
+                 member_ids: List[int], 
+                 duration: int):
+        """
+        Initializes a new check-in session.
+
+        Parameters:
+            db (DBHandler): The database handler instance.
+            cog (CheckinCog): The CheckinCog instance.
+            interaction (discord.Interaction): The interaction that triggered the session.
+            name (str): The name of the check-in session.
+            member_ids (List[int]): A list of member IDs participating in the session.
+            duration (int): The duration of the check-in session in seconds.
+
+        Attributes:
+            ... (See original attributes for details)
+        """
         
         # Critical Info first
         self.guild_id : int = interaction.guild.id
@@ -63,16 +80,16 @@ class CheckinSession:
         self.max_sessions_per_user = 5
 
         self.member_statuses = {member_id : {"status" : MemberStatus.PRESENT, "absences" : 0} for member_id in self.member_ids}
-                
+
         # Other stuff, not stored in Database
         self.cog : CheckinCog = cog
-        self.db : DBHandler = db
+        self.db = db
         self.guild : discord.Guild = interaction.guild
 
         logger.debug("Check-in session created with duration: %s seconds", duration)
 
-    ## Helper Function - Generate Session ID
-    def generate_session_id(self):
+    # Helper Function - Generate Session ID
+    def generate_session_id(self) -> str:
         return str(uuid.uuid4())  # Generates a random unique session ID
     
     
@@ -96,7 +113,7 @@ class CheckinSession:
             }
 
             # Save the check-in session to the database
-            await self.db.save_checkin_session(session_data)
+            await self.db.add_checkin_session(session_data)
             logger.info(f"Check-in session {self.name} with ID {self.session_id} saved to the database.")
         
             # Save members' data to the database
@@ -107,30 +124,30 @@ class CheckinSession:
                     data["status"].value, 
                     data["absences"]
                 )
-            logger.info(f"Members' statuses for session {self.session_id} saved to the database.")
-        
+            logger.debug(f"Members' statuses for session {self.session_id} saved to the database.")
+
         except Exception as e:
-            logger.error(f"Failed to setup check-in resources: {str(e)}")
-            raise
+            logger.error(f"Failed to setup check-in resources: {e}")
+            raise  # Re-raise the exception after logging
 
 
     """Attendance Functions"""
 
-    ## Attendance Function - Increment Reminder Count
+    # Attendance Function - Increment Reminder Count
     def increment_reminder(self) -> None:
+        # Increments the reminder count and updates the database.
         self.reminder_count += 1
-        asyncio.create_task(self.db.update_checkin_session({
-        "session_id": self.session_id,
-        "reminder_count": self.reminder_count,
-        "last_reminder_message_id": self.last_reminder_message_id,
-        "active": 1
-        }))
+        asyncio.create_task(self.db.update_checkin_session(
+            self.session_id,
+            reminder_count=self.reminder_count,
+            last_reminder_message_id=self.last_reminder_message_id,
+            active=1))
         logger.debug(f"Incremented reminder count to: {self.reminder_count}")
     
     
-    ## Attendance Function - Move People to Absent
+    # Attendance Function - Move People to Absent
     async def update_member_statuses(self):
-        """
+        """ 
         Update member statuses at the end of each reminder cycle. 
         Move all present members to absent.
         Increment absences for absent members, and mark those who exceed max absences as exited.
@@ -140,12 +157,12 @@ class CheckinSession:
                 if status_info["status"] == MemberStatus.PRESENT:
                     # Move present members to absent and absence is set to 0
                     self.member_statuses[member_id]["status"] = MemberStatus.ABSENT
-                    self.member_statuses[member_id]["absences"] = 0
-                    logger.debug(f"Member {member_id} moved to absent and reset their absence counter to 0")
+                    self.member_statuses[member_id]["absences"] = 0  # Reset absences when moving to absent
+                    logger.debug(f"Member {member_id} moved to absent and reset their absence counter.")
                 elif status_info["status"] == MemberStatus.ABSENT:
                     # Increment absence count
                     self.member_statuses[member_id]["absences"] += 1
-                    logger.debug(f"Incremented absences for member {member_id}: {self.member_statuses[member_id]['absences']} absences.")
+                    logger.debug(f"Incremented absences for member {member_id}: {self.member_statuses[member_id]['absences']}")
                     
                     # Remove members who exceed max absences and mark them as exited
                     if self.member_statuses[member_id]["absences"] >= CheckinSession.max_absences:
@@ -153,8 +170,8 @@ class CheckinSession:
                         self.member_statuses[member_id]["absences"] = 0
                         self.member_ids.remove(member_id)
                         logger.info(f"Member {member_id} exceeded max absences. Status set to exited.")
-            
-            # Update member statuses in the database
+
+            # Bulk update member statuses in the database after processing all members
             for member_id, status_info in self.member_statuses.items():
                 await self.db.add_or_update_checkin_member(
                     self.session_id,
@@ -162,17 +179,16 @@ class CheckinSession:
                     status_info["status"].value,
                     status_info["absences"]
                 )
-            logger.debug(f"Updated member statuses in the database for session {self.session_id}.")
-
+            logger.debug(f"Updated member statuses in the database")
         except Exception as e:
-            logger.error(f"Failed to update member statuses: {str(e)}")
-
-
+            logger.error(f"Failed to update member statuses: {e}")
 
     """Message Functions"""
 
-    ## Embed Function - Create Embed
-    def create_embed(self, initial=False) -> discord.Embed:    
+    # Embed Function - Create Embed
+    def create_embed(self, initial: bool = False) -> discord.Embed:
+        """Creates an embed for the check-in session."""
+
         try:
             member_objs = [self.guild.get_member(member_id) for member_id in self.member_ids]
             present_objs = [self.guild.get_member(member_id) for member_id, status in self.member_statuses.items() if status["status"] == MemberStatus.PRESENT]
@@ -182,7 +198,7 @@ class CheckinSession:
 
             # Create the embed for the session
             embed = discord.Embed(
-                title="Let's get started!" if initial else random.choice(CheckinSession.prompt_messages),
+                title="Let's get started!" if initial else random.choice(self.prompt_messages),
                 color=discord.Color.blue(),
                 description=f"Reminder No: {self.reminder_count}"
             )
@@ -216,11 +232,10 @@ class CheckinSession:
 
             return embed
         except Exception as e:
-            logger.error(f"Failed to create embed for session {self.session_id}: {str(e)}")
-            return discord.Embed(title="Error", description="An error occurred while creating the embed.", color=discord.Color.red())
+            logger.error(f"Failed to create embed: {e}")
+            return discord.Embed(title="Error", description="An error occurred while creating the embed.", color=discord.Color.red())  # Return an error embed
 
-
-    ## Embed Function - Update Embed
+    # Embed Function - Update Embed
     async def update_embed(self) -> None:
         # Update the message embed after any interaction. 
         try:
@@ -229,11 +244,11 @@ class CheckinSession:
                 reminder_message : discord.Message = await text_channel.fetch_message(self.last_reminder_message_id)
                 embed = self.create_embed()
                 await reminder_message.edit(embed=embed)
-        except Exception as e:
-            logger.error(f"Failed to update embed for session {self.session_id}: {str(e)}")
-    
+        except Exception as e:  # Broad exception handling
+            logger.error(f"Failed to update embed: {e}")
 
-    ## Message Function - Disable Previous Buttons    
+
+    # Message Function - Disable Previous Buttons
     async def disable_previous_buttons(self) -> None:
         try:
             text_channel : discord.TextChannel = self.guild.get_channel(self.text_id)
@@ -248,43 +263,35 @@ class CheckinSession:
                             new_view.add_item(item)
 
                 await last_message.edit(view=new_view)
-                logger.info("Disabled buttons in the previous reminder message.")
+                logger.debug("Disabled buttons in the previous reminder message.")
         except discord.NotFound:
-            logger.warning(f"Previous reminder message not found (ID: {self.last_reminder_message_id}).")
+            logger.warning(f"Previous reminder message not found (ID: {self.last_reminder_message_id})")
         except discord.HTTPException as e:
-            logger.error(f"Failed to disable buttons in previous reminder message: {str(e)}")
-        except Exception as e:
-            logger.error(f"Unexpected error disabling buttons: {str(e)}")
- 
+            logger.error(f"Failed to disable buttons in previous reminder message: {e}")
+        except Exception as e:  # Catch other exceptions
+            logger.error(f"Unexpected error disabling buttons: {e}")
 
-    ## Message Function - Send Reminder Message (along with Initial)
-    async def send_reminder_message(self, initial : bool = False) -> None:
-        try:    
+    # Message Function - Send Reminder Message
+    async def send_reminder_message(self):
+        """Sends a reminder message with the current session status."""
+        try:
             text_channel : discord.TextChannel = self.guild.get_channel(self.text_id)
             members : List[discord.Member] = [self.guild.get_member(member_id) for member_id in self.member_ids if member_id in self.member_statuses]
             members_mention_msg = ", ".join([member.mention for member in members])
-            
-            if initial:
-                initial_embed = self.create_embed(initial=True)
-                initial_button_view = self.create_buttons(initial=True)
-                initial_message = await text_channel.send(content=members_mention_msg,embed=initial_embed, view=initial_button_view)
-                self.last_reminder_message_id = initial_message.id
-                logger.info(f"Initial message sent for session name: {self.name} and ID: {self.session_id}.")
-            
-            else:
-                reminder_embed = self.create_embed()
-                reminder_button_view = self.create_buttons()
-                reminder_message = await text_channel.send(content=members_mention_msg,embed=reminder_embed, view=reminder_button_view)
-                self.last_reminder_message_id = reminder_message.id
-                logger.info(f"Initial message sent for session name: {self.name} and ID: {self.session_id}.")
 
+            embed = self.create_embed()  # Create embed
+            button_view = self.create_buttons()  # Create buttons
+            message = await text_channel.send(content=members_mention_msg, embed=embed, view=button_view)  # Send message with embed and buttons
+
+            self.last_reminder_message_id = message.id  # Store message ID
+            logger.info(f"Reminder message sent for session: {self.name} (ID: {self.session_id})")
 
         except Exception as e:
-            logger.error(f"Failed to send initial message for session {self.session_id}: {str(e)}")
+            logger.error(f"Failed to send reminder message: {e}")
 
 
-    ## Message Function - Send Reminder Message
     async def run_checkin_reminders(self):
+        """Manages the reminder loop for the check-in session."""
         try:
             while self.session_id in self.cog.active_sessions:
                 
@@ -300,7 +307,7 @@ class CheckinSession:
                     await self.disable_previous_buttons()
                 
                 # 2. Update Member statuses
-                await self.update_member_statuses()
+                await self.update_member_statuses()  # Update member statuses before sending reminders
                 
                 # 3. If no members are left, the session is over
                 if not self.member_ids:
@@ -316,14 +323,14 @@ class CheckinSession:
                     return                  # Exit the loop
                 
                 # 4. Send next reminder message
-                await self.send_reminder_message()
+                await self.send_reminder_message()  # Send next reminder
 
-                # 5. Update the reminder time
+                # 5. Update reminder times
                 self.last_reminder_time = datetime.now().timestamp()
                 self.next_reminder_time = self.last_reminder_time + self.duration
 
                 # 6. Increment reminder count
-                self.increment_reminder()
+                self.increment_reminder()  # Increment reminder count
 
                 # Update session in the db
                 await self.db.update_checkin_session({
@@ -332,18 +339,14 @@ class CheckinSession:
                     "next_reminder_time": self.next_reminder_time,
                     "reminder_count": self.reminder_count
                 })
-                
-               
-                logger.info(f"Reminder {self.reminder_count} sent with updated members.")
+
+                logger.debug(f"Reminder {self.reminder_count} sent with updated members.")
         except Exception as e:
-            logger.error(f"Failed to send reminder message for session {self.session_id}: {str(e)}")
+            logger.error(f"Failed in run_checkin_reminders: {e}")  # More specific error message
 
 
+    """Button Functions"""
 
-    """Button & Callback Functions"""
-
-
-    ## Button Function - Create Buttons
     def create_buttons(self, initial=False) -> discord.ui.View:
         try:    
             # Create the buttons    
@@ -370,7 +373,6 @@ class CheckinSession:
         except Exception as e:
             logger.error(f"Failed to create buttons: {str(e)}")
             return discord.ui.View()
-    
 
     ## Button Function - Mark Present
     async def mark_present_callback(self, interaction: discord.Interaction):
@@ -490,8 +492,7 @@ class CheckinSession:
                 "active": 0
             })
 
-
-            await self.clear_session_data()
+            await self.clear_session_data()  # Call clear_session_data
 
             logger.info(f"Check-in session {self.session_id} successfully ended by {interaction.user.display_name}.")
             await interaction.followup.send("Check-in session has been manually ended.", ephemeral=True)
@@ -512,11 +513,12 @@ class CheckinSession:
     async def clear_session_data(self):
         # Clear all session data explicitly to avoid any future interaction
         try:
-            
-            # Delete session and members data from the database first
+            # Delete session data from the database
             await self.db.delete_checkin_session(self.session_id)
             
-            # Clear in-memory session data
+            logger.info(f"Deleted session data from the database for session: {self.name} (ID: {self.session_id})")
+
+            # Clear in-memory data
             self.member_ids.clear()
             self.member_statuses.clear()
             self.last_reminder_message_id = 0
@@ -526,21 +528,23 @@ class CheckinSession:
             self.cog.active_sessions.pop(self.session_id)
             
             logger.debug(f"Session data for session name {self.name} and Session ID: {self.session_id} cleared successfully.")
-        except Exception as e:
-            logger.error(f"Failed to clear session data for session {self.session_id}: {str(e)}")
+        except Exception as e:  # Catch-all for exceptions
+            logger.error(f"Failed to clear session data: {e}")
+            raise  # Re-raise the exception
 
 
 class CheckinCog(commands.Cog):
-
-    def __init__(self, bot: commands.Cog):
-        self.bot = bot
-        self.db : DBHandler = bot.db
-        self.active_sessions = {}
+    def __init__(self, bot: commands.Bot, db):  # Add db parameter
+        """Initializes the CheckinCog with the bot instance and database handler."""
+        self.bot : commands.Bot = bot
+        self.db = db  # Store the database handler
+        self.active_sessions = {}  # Use a dictionary to store active sessions by session_id
+        asyncio.create_task(self.load_active_sessions_from_db())  # Start loading sessions asynchronously
         logger.debug("Check-in Cog initialized.")
 
-
-    ## Function - Load Active Sessions from DB
     async def load_active_sessions_from_db(self):
+        """Loads active sessions from the database and starts their reminder loops."""
+
         """
         Load all active check-in sessions from the database and start their reminder loops.
         """
@@ -561,14 +565,14 @@ class CheckinCog(commands.Cog):
                     }
                     for member in member_statuses
                 }
-
+                
                 # Create a new CheckinSession object
                 session = CheckinSession(
                     db=self.db,
                     cog=self,
                     interaction=None,  # Interaction is not available during bot restart
                     name=session_data["name"],
-                    member_ids=[m['member_id'] for m in member_statuses],
+                    member_ids=[m["member_id"] for m in member_statuses],
                     duration=session_data["duration"]
                 )
 
@@ -589,60 +593,46 @@ class CheckinCog(commands.Cog):
 
                 # Staggered start for reminders (random small delay)
                 # Delay between 30 and 150 seconds
-                delay = random.uniform(30,150)
+                delay = random.uniform(30, 150)
                 await asyncio.sleep(delay)
-                self.bot.loop.create_task(session.run_checkin_reminders())  # Start the reminder loop
+                asyncio.create_task(session.run_checkin_reminders())  # Start the reminder loop
 
-                logger.info(f"Loaded check-in session with name: {session.name} and ID: {session.session_id} from the database.\n And reminder loop started.")
+                logger.info(f"Loaded check-in session from DB and started reminder loop: {session.name} (ID: {session.session_id})")
 
             logger.info(f"Loaded {len(active_sessions)} active sessions from the database.")
 
         except Exception as e:
-            logger.error(f"Failed to load active sessions from database: {str(e)}")
+            logger.error(f"Failed to load active sessions: {e}")
 
-    """Cog Commands"""
-    
-    ## Command - /checkin
     @app_commands.command(name='checkin', description='Starts a check-in session with specified duration and mentions.')
     @app_commands.describe(name= 'Name of the Checkin Session', duration='The duration of the check-in session in format \'2d 14h 25m 30s\'', mentions='The users/roles to be included in the check-in session.')
-    async def start_checkin(self, interaction : discord.Interaction, name: str, mentions: str, duration: str):
+    async def start_checkin(self, interaction: discord.Interaction, name: str, mentions: str, duration: str):
+        """Starts a new check-in session."""
         await interaction.response.defer()
-        # Parse the duration and mentions
-        duration_seconds = parse_duration(duration)
-        member_ids = parse_mentions(interaction, mentions)
-        
-         # Validate parameters before proceeding
-        if not await validate_parameters(
-            interaction = interaction,
-            name = name,
-            member_ids = member_ids,
-            duration= duration,
-            max_members= CheckinSession.max_members
-        ):
-            logger.error(f"Checkin Session: Validation failed for {name} by user {interaction.user.display_name}")
-            return          # Exit if validation fails
+        logger.info(f"Starting check-in session: {name}")
 
-        # Create a new session and save it
+        duration_seconds = parse_duration(duration)  # Convert duration string to seconds
+        member_ids = parse_mentions(interaction, mentions)  # Extract member IDs from mentions
+
+        # Input validation
+        if not await validate_parameters(interaction, name, member_ids, duration, CheckinSession.max_members):
+            logger.warning(f"Validation failed for check-in session: {name}")
+            return
+
         try:
             session = CheckinSession(
-                db=self.bot.db,
+                db=self.db,
                 cog=self,
                 interaction=interaction,
                 name=name,
                 member_ids=member_ids,
-                duration=duration_seconds
-            )
-            self.active_sessions[session.session_id] = session  # Store session by its ID
+                duration=duration_seconds)
+            await session.setup_checkin_resources()  # Save session and member data to the database
+            self.active_sessions[session.session_id] = session  # Track active session
             logger.info(f"Check-in session with ID {session.session_id} started by {interaction.user.display_name} in channel {interaction.channel.id}.")
 
-            # Send the initial message with buttons
-            await session.send_initial_message()
+            await session.send_reminder_message()  # Send initial reminder
         except Exception as e:
-            logger.error(f"Error starting check-in session: {str(e)}")
-            await interaction.followup.send("An error occurred while starting the check-in session.", ephemeral=True)
+            logger.error(f"Failed to start check-in session: {e}")
+            await interaction.followup.send(f"Failed to start check-in session: {e}", ephemeral=True)  # Provide feedback to the user
 
-
-"""Setup Bot"""
-async def setup(bot):
-    await bot.add_cog(CheckinCog(bot))
-    logger.info("CheckinCog loaded successfully.")
