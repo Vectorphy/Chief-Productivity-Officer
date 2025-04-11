@@ -5,7 +5,7 @@
 - `/create_group <name> [max_size]`: Create a new study group
   - `name`: The name of the study group
   - `max_size`: (Optional) Maximum number of members allowed in the group (default is 10)
-  - Creates a new study group with the specified name and optional size limit. Also creates associated roles for the group.
+  - `mentions`: The users to add to the group.
 
 - `/join_group <name>`: Join an existing study group
   - `name`: The name of the study group you want to join
@@ -18,6 +18,21 @@
 - `/end_group <name>`: End a study group (group creator or manager only)
   - `name`: The name of the study group to end
   - Deletes the specified study group, removing all members and associated roles.
+
+- `/group_add_member <user_id>`: Add a member to a study group (Group Owner only)
+    - `user_id`: The ID of the user to add
+    - Adds a member to the study group.
+
+- `/group_remove_member <user_id>`: Remove a member from a study group (Group Owner only)
+    - `user_id`: The ID of the user to remove
+    - Removes a member from the study group.
+
+- `/group_transfer_ownership <user_id>`: Transfer ownership of a study group (Group Owner only)
+    - `user_id`: The ID of the user to transfer ownership to
+    - Transfers ownership of the study group to another member.
+
+
+
 
 - `/list_groups`: List all active study groups in the server
   - Displays a list of all current study groups with their member counts.

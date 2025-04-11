@@ -1,7 +1,9 @@
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-import asyncio
+from discord.ui import View, Button
+from utils import seconds_to_hms
+import random
 from datetime import datetime, timedelta
 import logging
 
@@ -18,6 +20,7 @@ class PomodoroSession:
         self.cycles = 0
         self.is_paused = False
         self.timer = None
+        self.message = None
         logger.info(f"Pomodoro session created for group {group_id} with focus: {focus}m, short break: {short_break}m, long break: {long_break}m")
 
 class Pomodoro(commands.Cog):
@@ -65,8 +68,10 @@ class Pomodoro(commands.Cog):
             return
 
         logger.info(f"Started Pomodoro session for group {group['id']}")
-        await interaction.response.send_message(f"Pomodoro session started! Focus for {focus} minutes.")
-        self.run_timer.start(interaction.guild_id, group['id'])
+        embed = self.create_embed(session)
+        view = self.create_view()
+        self.message = await interaction.response.send_message(embed=embed, view=view)
+        self.run_timer.start(interaction.guild.id, group['id'])
 
     @app_commands.command(name="end_pomodoro", description="End the current Pomodoro session")
     async def end_pomodoro(self, interaction: discord.Interaction):
@@ -79,7 +84,7 @@ class Pomodoro(commands.Cog):
 
         self.run_timer.stop()
         del self.sessions[group['id']]
-        logger.info(f"Ended Pomodoro session for group {group['id']}")
+        logger.info(f"Ended Pomodoro session for group {group['id']} by user {interaction.user.id}")
         await interaction.response.send_message("Pomodoro session ended.")
 
     @app_commands.command(name="pause_pomodoro", description="Pause the current Pomodoro session")
@@ -98,7 +103,7 @@ class Pomodoro(commands.Cog):
             return
 
         session.is_paused = True
-        logger.info(f"Paused Pomodoro session for group {group['id']}")
+        logger.info(f"Paused Pomodoro session for group {group['id']} by user {interaction.user.id}")
         await interaction.response.send_message("Pomodoro session paused.")
 
     @app_commands.command(name="resume_pomodoro", description="Resume the paused Pomodoro session")
@@ -150,6 +155,18 @@ class Pomodoro(commands.Cog):
                 logger.info(f"Group {group_id} starting focus session")
                 await self.send_notification(guild_id, group_id, f"Break ended. Focus for {session.focus} minutes!")
 
+        # Check if voice channel is empty and end session if so
+        guild = self.bot.get_guild(guild_id)
+        if guild:
+            group = await self.bot.db.get_study_group(group_id)
+            if group:
+                voice_channel_id = group['voice_channel_id']
+                voice_channel = guild.get_channel(voice_channel_id)
+                if voice_channel and not voice_channel.members:
+                    logger.info(f"All members left voice channel {voice_channel.id} for group {group_id}. Ending Pomodoro session.")
+                    await self.end_pomodoro_by_group_id(group_id)
+                    return
+
     async def send_notification(self, guild_id, group_id, message):
         guild = self.bot.get_guild(guild_id)
         if guild:
@@ -191,6 +208,16 @@ class Pomodoro(commands.Cog):
 
         logger.info(f"Sent Pomodoro status for group {group['id']}")
         await interaction.response.send_message(embed=embed)
+
+    async def end_pomodoro_by_group_id(self, group_id):
+        if group_id in self.sessions:
+            self.run_timer.stop()
+            del self.sessions[group_id]
+            logger.info(f"Pomodoro session ended for group {group_id} due to empty voice channel.")
+            #Send a notification
+            guild = self.bot.get_guild(await self.bot.db.get_study_group(group_id).guild_id)
+            if guild:
+                await self.send_notification(guild.id, group_id, "Pomodoro session ended because all members left the voice channel.")
 
 async def setup(bot):
     await bot.add_cog(Pomodoro(bot))

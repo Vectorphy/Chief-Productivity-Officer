@@ -2,6 +2,8 @@ import asyncio
 import logging
 import os
 import signal
+import discord
+from discord.ext import commands
 
 from dotenv import load_dotenv
 from bot import CPO
@@ -52,3 +54,21 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+@cpo.event
+async def on_command_error(ctx, error):
+    """Handles errors that occur during command processing."""
+    if isinstance(error, commands.CommandNotFound):
+        logger.warning(f"Command not found: {ctx.message.content}")
+        await ctx.reply("I don't know that command. Please use `/help` for a list of available commands.")
+    elif isinstance(error, commands.MissingPermissions):
+        logger.warning(f"Missing permissions for command: {ctx.message.content}")
+        await ctx.reply("You don't have the required permissions to use this command.")
+    elif isinstance(error, commands.CheckFailure):
+        logger.warning(f"Check failed for command: {ctx.message.content}")
+        await ctx.reply("You are not allowed to use this command.")
+    else:
+        logger.error(f"An error occurred: {error}")
+        await ctx.reply("An unexpected error occurred. Please try again later.")
+

@@ -6,9 +6,22 @@ from typing import List, Any, Dict, Optional
 
 # Import Motor (async MongoDB driver)
 from motor.motor_asyncio import AsyncIOMotorClient
+from bson.objectid import ObjectId
 import pymongo.errors  # Import for handling PyMongo exceptions
 
 logger = logging.getLogger(__name__)
+
+# Constants for table names
+STUDY_GROUPS_TABLE = 'study_groups'
+STUDY_GROUP_MEMBERS_TABLE = 'study_groups_members'
+POMODORO_SESSIONS_TABLE = 'pomodoro_sessions'
+MANAGERS_TABLE = 'managers'
+VOICE_CHANNEL_LOGS_TABLE = 'voice_channel_logs'
+GUILD_SETTINGS_TABLE = 'guild_settings'
+TASKS_TABLE = 'tasks'
+CHECKIN_SESSIONS_TABLE = 'checkin_sessions'
+CHECKIN_MEMBERS_TABLE = 'checkin_members'
+
 
 class DBHandler:
     def __init__(self, mongo_uri: str, db_name: str):
@@ -36,7 +49,7 @@ class DBHandler:
         """Create indexes for efficient querying."""
         try:
             # Example: Create unique index on study_groups.group_id
-            await self.db['study_groups'].create_index("group_id", unique=True)
+            await self.db[STUDY_GROUPS_TABLE].create_index("group_id", unique=True)
             logger.info("Created unique index on study_groups.group_id")
         except Exception as e:
             logger.error(f"Error creating indexes: {e}")
@@ -47,7 +60,6 @@ class DBHandler:
             self.client.close()
             logger.info("MongoDB connection closed.")            
 
-    async def create_tables(self):
         async with self.lock:
             cursor = self.conn.cursor()
             
@@ -65,8 +77,8 @@ class DBHandler:
             CREATE TABLE IF NOT EXISTS study_groups (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 guild_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
                 group_id TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
                 creator_id INTEGER NOT NULL,
                 owner_id INTEGER NOT NULL,
                 category_id INTEGER NOT NULL,
@@ -76,24 +88,25 @@ class DBHandler:
                 text_id INTEGER DEFAULT 0,
                 info_embed_id INTEGER DEFAULT 0,
                 speak_enabled BOOLEAN DEFAULT 1,
-                video_mode TEXT DEFAULT 'off',
+                video_mode TEXT CHECK( video_mode IN ('off', 'on', 'auto')) DEFAULT 'off',
                 video_timer INTEGER DEFAULT 10,
                 start_time REAL NOT NULL,
                 end_time REAL NOT NULL,
                 duration INTEGER NOT NULL,
-                active BOOLEAN DEFAULT 0
+                active BOOLEAN DEFAULT 0,
+                is_permanent BOOLEAN DEFAULT 0
             )
             ''')
             logger.info("Created 'study_groups' table.")
 
             ### STUDY GROUP MEMBERS TABLE
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS study_groups_members (
-                group_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                FOREIGN KEY (group_id) REFERENCES study_groups (group_id),
-                PRIMARY KEY (group_id, user_id)
-            )
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS study_groups_members (
+                    group_id TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    FOREIGN KEY (group_id) REFERENCES study_groups (group_id),
+                    PRIMARY KEY (group_id, user_id)
+                )
             ''')
             logger.info("Created 'study_groups_members' table.")
 
@@ -101,13 +114,15 @@ class DBHandler:
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS pomodoro_sessions (
                 id INTEGER PRIMARY KEY,
-                group_id INTEGER,
-                start_time REAL,
-                end_time REAL,
-                focus_duration INTEGER,
-                short_break_duration INTEGER,
-                long_break_duration INTEGER,
-                FOREIGN KEY (group_id) REFERENCES study_groups (id)
+                group_id TEXT,
+                current_stage TEXT CHECK(current_stage IN ('focus', 'short_break', 'long_break')) DEFAULT 'focus',
+                cycles INTEGER DEFAULT 0,
+                is_paused BOOLEAN DEFAULT 0,
+                timer INTEGER DEFAULT 0,
+                FOREIGN KEY (group_id) REFERENCES study_groups (group_id)
+                ON DELETE CASCADE
+                ON UPDATE CASCADE
+            
             )
             ''')
             logger.info("Created 'pomodoro_sessions' table.")
@@ -151,19 +166,25 @@ class DBHandler:
             CREATE TABLE IF NOT EXISTS tasks (
                 id INTEGER PRIMARY KEY,
                 user_id INTEGER NOT NULL,
+                guild_id INTEGER NOT NULL,
                 description TEXT NOT NULL,
                 completed BOOLEAN NOT NULL DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                due_date TIMESTAMP,
+                reminders_sent TEXT
             )
-            ''')
+''')
             logger.info("Created 'tasks' table.")
+
+            
+
 
             ### CHECKIN SESSIONS TABLE
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS checkin_sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL UNIQUE,
-                guild_id INTEGER NOT NULL,
+                guild_id INTEGER,
                 name TEXT NOT NULL,
                 creator_id INTEGER NOT NULL,
                 owner_id INTEGER NOT NULL,
@@ -173,8 +194,9 @@ class DBHandler:
                 last_reminder_time REAL NOT NULL,
                 next_reminder_time REAL NOT NULL,
                 reminder_count INTEGER NOT NULL,
-                last_reminder_message_id INTEGER,
+                last_reminder_message_id INTEGER NOT NULL DEFAULT 0,
                 active BOOLEAN DEFAULT 1
+
             )
             ''')
             logger.info("Created 'checkin_sessions' table.")
@@ -182,14 +204,29 @@ class DBHandler:
             ### CHECKIN MEMBERS TABLE
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS checkin_members (
-                session_id TEXT NOT NULL,
-                member_id INTEGER NOT NULL,
-                status TEXT NOT NULL,
-                absences INTEGER DEFAULT 0,
+               session_id TEXT NOT NULL,
+               member_id INTEGER NOT NULL,
+               status TEXT NOT NULL CHECK(status IN ('online', 'offline', 'afk', 'dnd')),
+               absences INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY (session_id) REFERENCES checkin_sessions (session_id),
                 PRIMARY KEY (session_id, member_id)
             )
             ''')
+            logger.info("Created 'study_groups_members' table.")
+            
+            ### STUDY GROUP MEMBERS TABLE
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS study_groups_members (
+                    group_id TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    is_muted BOOLEAN DEFAULT 0,
+                    is_deafened BOOLEAN DEFAULT 0,
+                    in_vc BOOLEAN DEFAULT 0,
+                    present BOOLEAN DEFAULT 0,
+                    joined_at TIMESTAMP,
+                    FOREIGN KEY (group_id) REFERENCES study_groups (group_id),
+                    PRIMARY KEY (group_id, user_id)
+                )
             logger.info("Created 'checkin_members' table.")
 
             self.conn.commit()
@@ -201,68 +238,70 @@ class DBHandler:
             self.conn.close()
             logger.info("Database connection closed.")
 
-
     ### --- STUDY GROUP DB OPERATIONS --- ###
-
-    ### Save Study Group
-    async def save_study_group(self, study_group_data: Dict[str, Any]) -> None:
-        """Insert a new study group into the database."""
+    async def save_study_group(self, study_group_data: Dict[str, Any]) -> str:
         async with self.lock:
-            try:
-                result = await self.db['study_groups'].insert_one(study_group_data)
-                logger.info(f"Study group '{study_group_data['name']}' created with ID {result.inserted_id}")
-            except pymongo.errors.DuplicateKeyError:
-                logger.warning(f"Study group with ID {study_group_data['group_id']} already exists.")
-            except Exception as e:
-                logger.error(f"Error saving study group: {e}")
-
-            cursor = self.conn.cursor()  # Generate a unique group ID
-            cursor.execute('''
-            INSERT INTO study_groups (
-                guild_id, name, group_id, creator_id, owner_id, category_id, 
-                max_members, group_role_id, vc_id, text_id, info_embed_id, 
-                speak_enabled, video_mode, video_timer, 
-                start_time, end_time, duration, active
-            ) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                study_group_data["guild_id"],
-                study_group_data["name"],
-                study_group_data["group_id"],
-                study_group_data["creator_id"],
-                study_group_data["owner_id"],
-                study_group_data["category_id"],
-                study_group_data["max_members"],
-                study_group_data["group_role_id"],
-                study_group_data["vc_id"],
-                study_group_data["text_id"],
-                study_group_data["info_embed_id"],
-                study_group_data["speak_enabled"],
-                study_group_data["video_mode"],
-                study_group_data["video_timer"],
-                study_group_data["start_time"],
-                study_group_data["end_time"],
-                study_group_data["duration"],
-                study_group_data["active"]
-            ))
-            self.conn.commit()
-            logger.info(f"Study group '{study_group_data['name']}' created with ID {study_group_data['group_id']}")
+                cursor = self.conn.cursor()  # Generate a unique group ID
+                cursor.execute('''
+                INSERT INTO study_groups (
+                    guild_id, name, group_id, creator_id, owner_id, category_id, 
+                    max_members, group_role_id, vc_id, text_id, info_embed_id, 
+                    speak_enabled, video_mode, video_timer, 
+                    start_time, end_time, duration, active
+                    is_permanent
+                ) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                ''', (
+                    study_group_data["guild_id"],
+                    study_group_data["name"],
+                    study_group_data["group_id"],
+                    study_group_data["creator_id"],         
+                    study_group_data["owner_id"],
+                    study_group_data["category_id"],
+                    study_group_data["max_members"],
+                    study_group_data["group_role_id"],
+                    study_group_data["vc_id"],
+                    study_group_data["text_id"],
+                    study_group_data["info_embed_id"],
+                    study_group_data["speak_enabled"],
+                    study_group_data["video_mode"],
+                    study_group_data["video_timer"],
+                    study_group_data["start_time"],
+                    study_group_data["end_time"],
+                    study_group_data["duration"],
+                    study_group_data["active"],
+                    study_group_data["is_permanent"]
+                ))            
+                study_group_id = cursor.lastrowid
+                self.conn.commit()
+                logger.info(f"Study group '{study_group_data['name']}' created with ID {study_group_data['group_id']}")
+                return study_group_id 
         
+    async def update_member_study_group(self, group_id : str, user_id : int, present : bool = False, in_vc : bool = False):
+        async with self.lock:
+            cursor = self.conn.cursor()
+            current_time = datetime.now().isoformat()  # Format the current time as an ISO 8601 string
+
+            # Determine if we need to perform an insert or an update
+            cursor.execute("SELECT 1 FROM study_groups_members WHERE group_id = ? AND user_id = ?", (group_id, user_id))
+            exists = cursor.fetchone()
+
+            if exists:
+                # Update if record exists
+                cursor.execute("""
+                    UPDATE study_groups_members SET present = ?, in_vc = ? WHERE group_id = ? AND user_id = ?
+                """, (present, in_vc, group_id, user_id))
+            else:
+                # Insert if record does not exist
+                cursor.execute("""
+                    INSERT INTO study_groups_members (group_id, user_id, present, in_vc, joined_at) VALUES (?, ?, ?, ?, ?)
+                """, (group_id, user_id, present, in_vc, current_time))
+
+            self.conn.commit()
+            logger.info(f"Updated member {user_id} in study group {group_id}: present={present}, in_vc={in_vc}")
+
 
     ### Update Study Group
-    async def update_study_group_by_id(self, study_group_data: Dict[str, Any]) -> None:
-        """Update a study group by its group_id."""
-        async with self.lock:
-            try:
-                group_id = study_group_data.pop('group_id')  # Remove group_id from update data
-                result = await self.db['study_groups'].update_one({'group_id': group_id}, {'$set': study_group_data})
-                if result.modified_count > 0:
-                    logger.info(f"StudyGroup '{study_group_data.get('name', 'Unknown')}' updated in the database.")
-                else:
-                    logger.warning(f"StudyGroup with ID {group_id} not found or not updated.")
-            except Exception as e:
-                logger.error(f"Error updating study group: {group_id} - {e}")  # More specific error message
-    
         # List of fields to update dynamically
         fields_to_update = []
         values = []
@@ -327,13 +366,16 @@ class DBHandler:
         if "active" in study_group_data:
             fields_to_update.append("active = ?")
             values.append(study_group_data["active"])
+        
+        if "is_permanent" in study_group_data:
+            fields_to_update.append("is_permanent = ?")
+            values.append(study_group_data["is_permanent"])
 
-        # If no fields are present to update, return early
         if not fields_to_update:
             logger.warning("No fields to update for the study group.")
             return
 
-        # Ensure that the group_id is always added as the last value for the WHERE clause
+
         values.append(study_group_data["group_id"])
 
         # Construct the SQL query dynamically based on the fields to update
@@ -344,37 +386,6 @@ class DBHandler:
             cursor = self.conn.cursor()
             cursor.execute(query, values)
             self.conn.commit()
-
-        logger.info(f"StudyGroup '{study_group_data.get('name', 'Unknown')}' updated in the database.")
-
-
-    ### Fetch Study Group by NAME (and GUILD ID)
-    async def fetch_study_group_by_name(self, name: str, guild_id: int) -> Optional[Dict[str, Any]]:
-        """Fetch a study group by its name and guild ID."""
-        async with self.lock:
-            try:
-                study_group = await self.db['study_groups'].find_one({'name': name, 'guild_id': guild_id})
-                if study_group:
-                    logger.debug(f"Retrieved study group by name '{name}' for guild {guild_id}.")
-                    return study_group
-                else:
-                    logger.debug(f"Study group by name '{name}' for guild {guild_id} not found.")
-                    return None
-            except Exception as e:
-                logger.error(f"Error fetching study group by name '{name}' in guild {guild_id}: {e}")  # More specific
-                return None
-
-#    async def fetch_study_group_by_name(self, name : str, guild_id : str) -> Dict[str, Any]:
-#        async with self.lock:
-#            cursor = self.conn.cursor()
-#            cursor.execute('SELECT * FROM study_groups WHERE LOWER(name) = LOWER(?) AND guild_id = ?', (name, guild_id))
-#            study_group_db = cursor.fetchone()
-#            logger.debug(f"Retrieved study group by name '{name}' for guild {guild_id}: {'Found' if study_group_db else 'Not found'}")
-#            return dict(study_group_db) if study_group_db else None
-
-
-    ### Fetch Study Group by GROUP ID
-    async def fetch_study_group_by_id(self, group_id: str) -> Optional[Dict[str, Any]]:
         async with self.lock:
             cursor = self.conn.cursor()
             cursor.execute('SELECT * FROM study_groups WHERE group_id = ?', (group_id,))
@@ -386,6 +397,32 @@ class DBHandler:
                 logger.debug(f"Fetched StudyGroup {group_id}: Not found.")
                 return None
 
+    ### Fetch Study Group by GROUP ID
+    async def fetch_study_group_by_id(self, group_id: str) -> Optional[Dict[str, Any]]:  # noqa: F811
+        """Fetch a study group by its group_id."""
+        async with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT * FROM study_groups WHERE group_id = ?", (group_id,))
+            study_group = cursor.fetchone()
+            return dict(study_group) if study_group else None
+    
+    ### Fetch Study Group by NAME (and GUILD ID)
+    async def fetch_study_group_by_name(self, name: str, guild_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch a study group by its name and guild ID."""
+        async with self.lock:
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT * FROM study_groups WHERE name = ? AND guild_id = ?', (name, guild_id))
+            group = cursor.fetchone()
+            if group:
+                logger.debug(f"Fetched StudyGroup by name '{name}' and guild_id '{guild_id}': Found.")
+                return dict(group)
+            else:
+                logger.debug(f"Fetched StudyGroup by name '{name}' and guild_id '{guild_id}': Not found.")
+                return None
+
+
+
+
 
     ### Add Member to Study Group by Group ID
     async def add_member_to_study_group_db(self, group_id: str, user_id: int) -> None:
@@ -396,14 +433,13 @@ class DBHandler:
             VALUES (?, ?)
             ''', (group_id, user_id))
             self.conn.commit()
-            logger.info(f"Added member {user_id} to StudyGroup {group_id}.")
 
 
     ### Remove Member from Study Group by Group ID
     async def remove_member_from_study_group_db(self, group_id: str, user_id: int) -> None:
         async with self.lock:
             cursor = self.conn.cursor()
-            cursor.execute('''
+            cursor.execute("""
             DELETE FROM group_members WHERE group_id = ? AND user_id = ?
             ''', (group_id, user_id))
             self.conn.commit()
@@ -440,7 +476,6 @@ class DBHandler:
             logger.debug(f"Fetched owner for Study Group {group_id}: {owner['owner_id'] if owner else 'Not found'}.")
             return owner['owner_id'] if owner else None
 
-
     ### Delete Study Group
     async def delete_study_group(self, group_id : int):
         async with self.lock:
@@ -448,7 +483,6 @@ class DBHandler:
             cursor.execute('DELETE FROM study_groups WHERE id = ?', (group_id,))
             cursor.execute('DELETE FROM group_members WHERE group_id = ?', (group_id,))
             self.conn.commit()
-            logger.info(f"Deleted study group with ID: {group_id}")
 
 
     ### Get Groups the User is in (Fetches multiple groups per user)
@@ -457,26 +491,31 @@ class DBHandler:
             cursor = self.conn.cursor()
             cursor.execute('''
                 SELECT study_groups.* 
-                FROM study_groups 
-                JOIN study_group_members ON study_groups.id = study_group_members.group_id
+                FROM study_groups
+                JOIN study_groups_members ON study_groups.group_id = study_groups_members.group_id
                 WHERE study_group_members.user_id = ? AND study_groups.guild_id = ?
             ''', (user_id, guild_id))
             groups = cursor.fetchall()  # Fetch all groups within the guild
             logger.debug(f"Retrieved {len(groups)} group(s) for user {user_id} in guild {guild_id}.\n The groups are: {[group.name for group in groups]}")
             return groups
 
-
-    ### Get All Groups in the Guild
     async def get_all_study_groups_of_guild(self, guild_id : int):
         async with self.lock:
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT * FROM study_groups WHERE guild_id = ?', (guild_id,))
-            groups = cursor.fetchall()
-            logger.debug(f"Retrieved {len(groups)} study groups for guild {guild_id}")
-            return groups  
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('SELECT * FROM study_groups WHERE guild_id = ?', (guild_id,))
+                groups = cursor.fetchall()
 
-
-
+                # Convert each row to a dictionary
+                groups_as_dicts = [dict(group) for group in groups]
+                
+                logger.debug(f"Retrieved {len(groups_as_dicts)} study groups for guild {guild_id}")
+                return groups_as_dicts
+            except Exception as e:
+                logger.error(f"Error fetching study groups for guild {guild_id}: {e}")
+                return []
+    async def get_member_study_group(self, user_id : int, group_id : str):
+        pass
     ### --- CHECKIN SESSION DB OPERATIONS --- ###
 
 
@@ -612,12 +651,6 @@ class DBHandler:
             logger.info(f"Deleted check-in session with ID: {session_id}.")
 
 
-
-
-
-
-
-
     async def update_group_roles(self, group_id, admin_role_id, session_role_id):
         async with self.lock:
             cursor = self.conn.cursor()
@@ -741,13 +774,35 @@ class DBHandler:
             logger.debug(f"Retrieved {len(managers)} managers for guild {guild_id}")
             return managers
 
-    async def add_task(self, user_id, description):
+    async def add_task(self, user_id, guild_id, description, due_date=None):
         async with self.lock:
             cursor = self.conn.cursor()
-            cursor.execute('''
-            INSERT INTO tasks (user_id, description)
-            VALUES (?, ?)
-            ''', (user_id, description))
+            if due_date:
+                cursor.execute('''
+                    INSERT INTO tasks (user_id, guild_id, description, due_date, reminders_sent)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (user_id, guild_id, description, due_date, ''))
+            else:
+                cursor.execute('''
+                    INSERT INTO tasks (user_id, guild_id, description)
+                    VALUES (?, ?, ?)
+                ''', (user_id, guild_id, description))
+                
+    async def edit_task(self, task_id: int, description: str, due_date: Optional[datetime] = None):
+        async with self.lock:
+            cursor = self.conn.cursor()
+            if due_date:
+                cursor.execute('''
+                    UPDATE tasks
+                    SET description = ?, due_date = ?
+                    WHERE id = ?
+                ''', (description, due_date, task_id))
+            else:
+                cursor.execute('''
+                    UPDATE tasks
+                    SET description = ?
+                    WHERE id = ?
+                ''', (description, task_id))
             task_id = cursor.lastrowid
             self.conn.commit()
             logger.info(f"Added task for user {user_id}: ID={task_id}, description='{description}'")

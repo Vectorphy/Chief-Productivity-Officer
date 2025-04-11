@@ -2,8 +2,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import asyncio
-from utils import parse_seconds_to_hms, parse_mentions, validate_parameters
-import logging
+from utils import parse_seconds_to_hms, parse_mentions, validate_group_parameters
+import logging, datetime
 import uuid
 from typing import List
 from datetime import datetime, timedelta
@@ -13,7 +13,7 @@ from discord.ui import View, Button, Select, Modal, TextInput
 import time
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(f"{__name__}.{current_namespace}")
 current_namespace = sys.modules[__name__].__name__.split('.')[-1]
 
 class StudyGroup:
@@ -149,7 +149,7 @@ class StudyGroup:
         
         # 5. Saving to the database
         try:
-            await self.db.save_study_group(study_group_data={
+            await self.db.create_study_group(study_group_data={
                 "guild_id": self.guild_id,
                 "name": self.name,
                 "group_id": self.group_id,
@@ -235,7 +235,7 @@ class StudyGroup:
             self.member_ids.append(user_id)
             
             # Update the database after adding the member
-            await self.db.add_member_to_study_group_db(self.group_id, user_id)
+            await self.db.add_group_member(group_id = self.group_id, member_id = user_id)
 
             logger.info(f"Member {member.display_name} added to the group {self.name}.")
             await interaction.followup.send(f"Member {member.display_name} added to the group.", ephemeral=True)
@@ -251,6 +251,11 @@ class StudyGroup:
     async def remove_member(self, interaction: discord.Interaction, user_id : int) -> None:
         ### Remove a member from group
         try:
+            if user_id == self.owner_id:
+                logger.warning(f"Cannot remove the owner from the group: {self.name}.")
+                await interaction.followup.send("You cannot remove the owner from the group.", ephemeral=True)
+                return
+
             if len(self.member_ids) < 0:
                 logger.warning(f"There are no members ({len(self.member_ids)}) in the group: {self.name}.")
                 await interaction.followup.send(f"There are no members in this group. No. of Members: {len(self.member_ids)}.", ephemeral=True)
@@ -273,7 +278,7 @@ class StudyGroup:
             self.member_ids.remove(user_id)
             
             # Update the database after removing the member
-            await self.db.remove_member_from_study_group_db(self.group_id, user_id)
+            await self.db.remove_group_member(group_id = self.group_id, member_id = user_id)
             
             logger.info(f"Member {member.display_name} removed from the study group '{self.name}'.")
             await interaction.followup.send(f"Member {member.display_name} successfully removed from the group.", ephemeral=True)
@@ -314,11 +319,10 @@ class StudyGroup:
                 return
 
             # Transfer ownership
-            await interaction.followup.send(content=f"Ownership transferred to from {interaction.user.mention} to {new_owner.mention}.")
             self.owner_id = new_owner_id
             
             # Update the database after transferring ownership
-            await self.db.transfer_ownership_study_group_db(self.group_id, new_owner_id)
+            await self.db.update_study_group(study_group_data = {"group_id": self.group_id, "owner_id": new_owner_id})
             await self.group_info_embed(update=True)
 
             logger.info(f"Ownership of group {self.study_group.name} transferred to from {interaction.user.display_name} to {new_owner.display_name}.", ephemeral=True)
@@ -327,6 +331,20 @@ class StudyGroup:
         except Exception as e:
             logger.error(f"Error transferring ownership: {e}")
 
+
+
+    ### --- SUPPORT FUNCTIONS --- ###
+    
+    ## Support - Get Member
+    def get_member(self, user_id : int) -> discord.Member:
+        try:
+            member = self.guild.get_member(user_id)
+            if not member:
+                logger.warning(f"Member with ID {user_id} not found in the guild.")
+            return member
+
+        except Exception as e:
+            logger.error(f"Error getting member {user_id} from the guild: {e}")
 
     
 
@@ -451,7 +469,7 @@ class StudyGroup:
             embed.add_field(name="Video Timer", value=f"{self.video_timer} seconds", inline=True)
             embed.add_field(name="Speak", value="On" if self.speak_enabled else "Off", inline=True)
 
-             # If updating an existing message
+            # If updating an existing message
             if update and self.info_embed_id:
                 try:
                     # Fetch the message by ID and edit it
@@ -522,7 +540,7 @@ class StudyGroup:
         role : discord.Role = self.guild.get_role(self.group_role_id)
 
         await interaction.response.send_message(f"❗❗Attention❗❗\n{role.mention}\nThe group will be destroyed in 60 seconds.\nPlease disconnect from the VCs and wrap up your activities.")
-        asyncio.create_task(self.end_group())
+        asyncio.create_task(self.end_group()) # The create_task is used to run end_group concurrently without blocking the callback.
         await interaction.followup.send("End Group function has started. The group will end shortly.")
         logger.info(f"User: {interaction.user.name} has called for the closure of Group'{self.name}', End Group function has started. The group will end shortly.")
 
@@ -552,6 +570,7 @@ class StudyGroup:
                     # Defer the interaction to avoid timeout
                     await interaction.response.defer(ephemeral=True)
                     
+                    old_name = self.study_group.name
                     # Update the group's name
                     self.study_group.name = new_name
                     
@@ -559,17 +578,17 @@ class StudyGroup:
                     role : discord.Role = interaction.guild.get_role(self.study_group.group_role_id)
                     if role:
                         await role.edit(name=f"{new_name} Group")
-                        logger.info(f"Role '{old_name} Group' renamed to '{new_name} Group'")
+                        logger.info(f"Role '{old_name} Group' renamed to '{new_name} Group' for Study Group: {self.study_group.group_id}")
                     
                     text_channel : discord.TextChannel = interaction.guild.get_channel(self.study_group.text_id)
                     if text_channel:
                         await text_channel.edit(name=f"{new_name}-text")
-                        logger.info(f"Text Channel '{old_name}-text' renamed to '{new_name}-text'")
+                        logger.info(f"Text Channel '{old_name}-text' renamed to '{new_name}-text' for Study Group: {self.study_group.group_id}")
                     
                     voice_channel : discord.VoiceChannel = interaction.guild.get_channel(self.study_group.vc_id)
                     if voice_channel:
                         await voice_channel.edit(name=f"{new_name}-voice")
-                        logger.info(f"Voice Channel '{old_name}-voice' renamed to '{new_name}-voice'")
+                        logger.info(f"Voice Channel '{old_name}-voice' renamed to '{new_name}-voice' for Study Group: {self.study_group.group_id}")
                     
                     # Update into database
                     await self.study_group.db.update_study_group_by_id({
@@ -616,31 +635,58 @@ class StudyGroup:
             
             await self.group_info_embed(update=True)
             await interaction.response.send_message(f"Duration extended by 1 hour. New end time: {self.end_time}", ephemeral=True)
-            logger.info(f"Duration extended by 1 hour. New end time: {self.end_time}. Database updated.")
+            logger.info(f"Duration extended by 1 hour. New end time: {self.end_time}. Database updated. Study Group: {self.group_id}")
         except Exception as e:
             logger.error(f"Error extending duration: {e}")
 
 
     ## Callback (Not Implemented)- Speak on/off
     async def speak_toggle_callback(self, interaction: discord.Interaction):
-        await interaction.response.send_message("Speak Toggle feature will be implemented later.", ephemeral=True)
+        await interaction.response.send_message("Speak Toggle feature is temporarily unavailable.", ephemeral=True)
 
 
     ## Callback (Not Implemented)- Video on/off/force
     async def video_toggle_callback(self, interaction: discord.Interaction):
-        await interaction.response.send_message("Video Toggle feature will be implemented later.", ephemeral=True)
+        await interaction.response.send_message("Video Toggle feature is temporarily unavailable.", ephemeral=True)
     
 
+    
     ## Callback (Not Implemented)- Votekick
     async def votekick_callback(self, interaction: discord.Interaction):
         await interaction.response.send_message("This feature will be implemented later.", ephemeral=True)
     
 
     ## Callback (Not Implemented)- Leave Group
-    async def leave_group_callback(self, interaction: discord.Interaction):
-        await interaction.response.send_message(f"This feature hasn't been added yet for '{self.name}'.", ephemeral=True)
-        # Placeholder for actual logic to remove the user from the group
-        # Example: await self.remove_member(interaction.user.id)
+    async def leave_group_callback(self, interaction: discord.Interaction) -> None:
+        """Handle a user leaving the study group."""
+        try:
+            # Check if the user is actually in the group
+            if interaction.user.id not in self.member_ids:
+                logger.warning(f"User {interaction.user.display_name} (ID: {interaction.user.id}) is not a member of group '{self.name}'.")
+                await interaction.response.send_message("You are not a member of this group.", ephemeral=True)
+                return
+            
+            # Check if the user is the owner and cannot leave
+            if interaction.user.id == self.owner_id:
+                logger.warning(f"The owner {interaction.user.display_name} cannot leave the group: {self.name}.")
+                await interaction.response.send_message("The owner cannot leave the group.", ephemeral=True)
+                return
+
+            # Remove the user from the group
+            await self.remove_member(interaction, interaction.user.id)
+
+            # Check if the group is now empty and end it if so
+            if not self.member_ids:
+                logger.info(f"Group '{self.name}' is now empty after {interaction.user.display_name} left. Ending group.")
+                await interaction.followup.send("You have left the group and since you were the last member, the group has been ended.", ephemeral=True)
+                await self.end_group()  # End the group if no members are left
+            else:               
+                logger.info(f"User {interaction.user.display_name} (ID: {interaction.user.id}) has left the study group '{self.name}'.")
+                await interaction.response.send_message("You have successfully left the group.", ephemeral=True)
+            
+        except Exception as e:
+            logger.error(f"Error handling leave group for user {interaction.user.display_name} in group '{self.name}': {e}")
+            await interaction.response.send_message("An error occurred while trying to leave the group.", ephemeral=True)
 
 
 
@@ -714,13 +760,8 @@ class StudyGroup:
             text_channel : discord.TextChannel = self.guild.get_channel(self.text_id)
             voice_channel : discord.VoiceChannel = self.guild.get_channel(self.vc_id)
 
-            # Calculate end timestamp
-            end_timestamp = int((datetime.now() + timedelta(seconds=60)).timestamp())
-            countdown_text = f"<t:{end_timestamp}:R>"
-
-            await text_channel.send(content=f"Hey people of {role.mention}\nThe End Function will start in 60 seconds.")
-            logger.info(f"The End condition has been triggered. from this namespae: {__name__}")
-            await text_channel.send(content=countdown_text)
+            # Log that the end condition has been triggered
+            logger.info(f"The End condition has been triggered.")
 
             await asyncio.sleep(60)
 
@@ -930,14 +971,21 @@ class StudyGroupCog(commands.Cog):
         mentioned_member_ids : List[int] = parse_mentions(interaction, mentions)
         
         
-        # Validate parameters before proceeding
+        # Validate_group_parameters parameters before proceeding
         if not await validate_parameters(
             interaction = interaction,
             name = name,
             mentions = mentioned_member_ids,
             max_members = max_members,
             category = category,
+            study_groups= self.study_groups
 
+        ):
+            await interaction.followup.send(
+                f"A study group with the name '{name}' already exists. Please choose a different name.",
+                ephemeral=True
+
+        
         ):
             logger.error(f"Validation failed for {name} by user {interaction.user}")
             return          # Exit if validation fails
@@ -969,6 +1017,99 @@ class StudyGroupCog(commands.Cog):
  
 
 
-async def setup(bot):
-    await bot.add_cog(StudyGroupCog(bot))
-    logger.info("StudyGroups cog loaded")
+
+    @app_commands.command(name="group_add_member", description="Add a member to an existing study group")
+    @app_commands.describe(group_id="ID of the group to add member", user_id="User ID of the member to add")
+    async def add_member(self, interaction: discord.Interaction, group_id: str, user_id: int):
+        """Adds a member to the specified study group."""
+        try:
+            if group_id not in self.study_groups:
+                await interaction.response.send_message(f"Group with ID '{group_id}' not found.", ephemeral=True)
+                return
+
+            study_group: StudyGroup = self.study_groups[group_id]
+
+            await interaction.response.defer()
+            await study_group.add_member(interaction, user_id)
+
+        except Exception as e:
+            logger.error(f"Error adding member to group: {e}")
+            await interaction.followup.send("An error occurred while adding the member.", ephemeral=True)
+
+
+
+    @app_commands.command(name="group_remove_member", description="Remove a member from an existing study group")
+    @app_commands.describe(group_id="ID of the group to remove member from", user_id="User ID of the member to remove")
+    async def remove_member(self, interaction: discord.Interaction, group_id: str, user_id: int):
+        """Removes a member from the specified study group."""
+        try:
+            if group_id not in self.study_groups:
+                await interaction.response.send_message(f"Group with ID '{group_id}' not found.", ephemeral=True)
+                return
+
+            study_group = self.study_groups[group_id]
+            if study_group.is_owner(user_id):
+                await interaction.response.send_message("You cannot remove the owner from the group.", ephemeral=True)
+                return
+
+            await interaction.response.defer()
+            await study_group.remove_member(interaction, user_id)
+
+        except Exception as e:
+            logger.error(f"Error removing member from group: {e}")
+            await interaction.followup.send("An error occurred while removing the member.", ephemeral=True)
+
+
+    @app_commands.command(name="group_transfer_ownership", description="Transfer group ownership to another member")
+    @app_commands.describe(group_id="ID of the group to transfer ownership", new_owner_id="User ID of the new owner")
+    async def transfer_ownership(self, interaction: discord.Interaction, group_id: str, new_owner_id: int):
+        """Transfers ownership of the specified study group to another member."""
+        try:
+            if group_id not in self.study_groups:
+                await interaction.response.send_message(f"Group with ID '{group_id}' not found.", ephemeral=True)
+                return
+
+            study_group = self.study_groups[group_id]
+            
+            await interaction.response.defer()
+            await study_group.transfer_ownership(interaction, new_owner_id)
+            await interaction.followup.send(f"Ownership of group {study_group.name} transferred to from {interaction.user.display_name} to {study_group.get_member(new_owner_id).display_name}.", ephemeral=True)
+
+        except Exception as e:
+            logger.error(f"Error transferring ownership: {e}")
+            await interaction.followup.send("An error occurred while transferring ownership.", ephemeral=True)
+
+
+class StudyGroupCog(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.study_groups = {}
+        logger.info("Study Group cog initialized")
+
+
+
+
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        try:
+            # Populate self.study_groups from DB on startup
+            groups_data = await self.bot.db.get_study_groups()
+
+            if not groups_data:
+                logger.info("No StudyGroups found in database on startup.")
+                return
+
+            for group_data in groups_data:
+                # Create StudyGroup Instance with Data, set the parameters
+                study_group = StudyGroup(self.bot.db, self, **group_data)
+                # Add the study group to the dictionary
+                self.study_groups[study_group.group_id] = study_group
+                # Start the background task to monitor the study group
+                self.bot.loop.create_task(study_group.check_end_condition())
+                logger.info(f"Loaded StudyGroup '{study_group.name}' with ID '{study_group.group_id}' from the database.")
+
+            logger.info("Finished loading StudyGroups from the database.")
+
+        except Exception as e:
+            logger.error(f"Error loading StudyGroups from database: {e}")
