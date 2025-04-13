@@ -1,9 +1,8 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import logging
 from enum import Enum
-from database import DBHandler
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -206,8 +205,7 @@ class Manager(commands.Cog):
             logger.error(f"Error setting permission level for user {user.id} to {level}: {e}")
             await interaction.response.send_message("An error occurred while setting the permission level.", ephemeral=True)
 
-
-async def setup(bot: commands.Bot, db: DBHandler, bot_developer_id: int):
+async def setup(bot: commands.Bot, db, bot_developer_id: int):
     """Sets up the Manager cog.
 
     Args:

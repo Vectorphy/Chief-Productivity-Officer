@@ -738,3 +738,19 @@ class DBHandler:
         except sqlite3.Error as e:
             logger.error(f"Error checking if user {user_id} is a manager in guild {guild_id}: {e}")
             raise
+
+    async def fetch_all_checkin_sessions(self) -> List[Dict[str, Any]]:
+        """Fetches all check-in sessions from the database.
+
+        Returns:
+            List[Dict[str, Any]]: A list of dictionaries, each representing a session.
+        """
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT * FROM checkin_sessions")
+            sessions = cursor.fetchall()
+            return [dict(session) for session in sessions]
+        except sqlite3.Error as e:
+            logger.error(f"Error fetching all check-in sessions: {e}")
+            raise
+

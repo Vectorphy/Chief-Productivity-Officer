@@ -6,12 +6,22 @@ from utils import app_is_manager, is_group_creator
 import logging
 import database
 
+# Set up logging for this module
 logger = logging.getLogger(__name__)
 
 class VoiceChannels(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-        logger.info("VoiceChannels cog initialized")
+    """
+    A cog for managing voice channels, roles, and text channels associated with study groups.
+
+    This cog provides commands to create and delete voice channels, roles, and text channels,
+    and automatically manages voice channels by deleting empty ones.
+    """
+    def __init__(self, bot: commands.Bot, db: database.DBHandler):
+        """Initializes the VoiceChannels cog.
+        """
+        self.bot: commands.Bot = bot
+        self.db: database.DBHandler = db
+        logger.info("VoiceChannels cog initialized.")
 
     @app_commands.command(name="create_vc", description="Create a voice channel for the study group")
     @app_commands.describe(name="Name of the voice channel (optional)")

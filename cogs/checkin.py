@@ -1,23 +1,20 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-from datetime import datetime, timedelta
-from utils import parse_duration, parse_mentions, parse_seconds_to_hms, validate_parameters
 import asyncio
 import random
 import uuid
-import sys
+import logging
+from utils import parse_duration, parse_mentions, parse_seconds_to_hms, validate_parameters
+from datetime import datetime, timedelta
 from discord.ui import Button, View
-from typing import List, Dict, Optional
+from typing import List, Dict
 from enum import Enum
-# Setting up basic configuration for logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-current_namespace = sys.modules[__name__].__name__.split('.')[-1]
 
+logger = logging.getLogger(__name__)
 
 class MemberStatus(Enum):
-    PRESENT = "present"
+    PRESENT = "present"  # Member is currently present
     ABSENT = "absent"
     EXITED = "exited"
     BREAK = "break"
@@ -39,29 +36,25 @@ class CheckinSession:
         "Any progress to report?"
     ]
 
-    def __init__(self,
-                 db,
-                 cog: 'CheckinCog', 
-                 interaction: discord.Interaction, 
-                 name: str, 
-                 member_ids: List[int], 
-                 duration: int):
-        """
-        Initializes a new check-in session.
+    def __init__(self, db, cog: 'CheckinCog', interaction: discord.Interaction, name: str, member_ids: List[int], duration: int):
+        """Initializes a new check-in session.
 
-        Parameters:
-            db (DBHandler): The database handler instance.
-            cog (CheckinCog): The CheckinCog instance.
+        Args:
+            db: The database handler instance.
+            cog (CheckinCog): The CheckinCog instance this session belongs to.
             interaction (discord.Interaction): The interaction that triggered the session.
             name (str): The name of the check-in session.
             member_ids (List[int]): A list of member IDs participating in the session.
             duration (int): The duration of the check-in session in seconds.
 
         Attributes:
-            ... (See original attributes for details)
+            guild_id (int): The ID of the guild where the session is running.
+            name (str): The name of the check-in session.
+            session_id (str): A unique ID for the session.
+            creator_id (int): The ID of the user who created the session.
+            owner_id (int): The ID of the session owner (initially the creator).
+            text_id (int): The ID of the text channel where the session is managed.
         """
-        
-        # Critical Info first
         self.guild_id : int = interaction.guild.id
         self.name : str = name
         self.session_id : str = self.generate_session_id()
@@ -69,10 +62,9 @@ class CheckinSession:
         self.owner_id : int = self.creator_id
         self.text_id : int = interaction.channel.id
         self.member_ids : List[int] = member_ids
-        
         self.duration : int = duration
         self.start_time : float = datetime.now().timestamp()
-        self.last_reminder_time : float = datetime.now().timestamp()
+        self.last_reminder_time: float = datetime.now().timestamp()
         self.next_reminder_time : float = (datetime.now() + timedelta(seconds=duration)).timestamp()
         self.last_reminder_message_id : int = None
         self.reminder_count : int = 0
@@ -85,16 +77,23 @@ class CheckinSession:
         self.cog : CheckinCog = cog
         self.db = db
         self.guild : discord.Guild = interaction.guild
+        logger.info(f"Check-in session '{self.name}' created with ID: {self.session_id}, duration: {self.duration} seconds, "
+                    f"members: {self.member_ids}, created by: {self.creator_id} in guild: {self.guild_id}")
 
-        logger.debug("Check-in session created with duration: %s seconds", duration)
-
-    # Helper Function - Generate Session ID
     def generate_session_id(self) -> str:
-        return str(uuid.uuid4())  # Generates a random unique session ID
-    
-    
-    ## Session Management Function - Setup Checkin Resources
+        """Generates a unique session ID using UUID.
+
+        Returns:
+            str: A unique session ID.
+        """
+        return str(uuid.uuid4())
+
     async def setup_checkin_resources(self):
+        """Sets up the check-in session by saving session details and member statuses to the database.
+
+        Raises:
+            Exception: If any error occurs during the database operations.
+        """
         try:
             session_data = {
                 "session_id": self.session_id,
@@ -112,80 +111,121 @@ class CheckinSession:
                 "active": 1  # Active sessions are marked as 1 (True)
             }
 
-            # Save the check-in session to the database
             await self.db.add_checkin_session(session_data)
-            logger.info(f"Check-in session {self.name} with ID {self.session_id} saved to the database.")
-        
-            # Save members' data to the database
+            logger.info(f"Session '{self.name}' (ID: {self.session_id}) details saved to the database.")
+
             for member_id, data in self.member_statuses.items():
                 await self.db.add_or_update_checkin_member(
-                    self.session_id, 
-                    member_id, 
-                    data["status"].value, 
-                    data["absences"]
+                    self.session_id, member_id, data["status"].value, data["absences"]
                 )
-            logger.debug(f"Members' statuses for session {self.session_id} saved to the database.")
+            logger.debug(f"Members' statuses for session '{self.name}' (ID: {self.session_id}) saved to the database.")
 
         except Exception as e:
-            logger.error(f"Failed to setup check-in resources: {e}")
-            raise  # Re-raise the exception after logging
+            logger.error(f"Failed to setup check-in resources for session '{self.name}' (ID: {self.session_id}): {e}")
+            raise  # Re-raise the exception to be handled by the caller
 
-
-    """Attendance Functions"""
-
-    # Attendance Function - Increment Reminder Count
     def increment_reminder(self) -> None:
-        # Increments the reminder count and updates the database.
-        self.reminder_count += 1
-        asyncio.create_task(self.db.update_checkin_session(
-            self.session_id,
-            reminder_count=self.reminder_count,
-            last_reminder_message_id=self.last_reminder_message_id,
-            active=1))
-        logger.debug(f"Incremented reminder count to: {self.reminder_count}")
-    
-    
-    # Attendance Function - Move People to Absent
-    async def update_member_statuses(self):
-        """ 
-        Update member statuses at the end of each reminder cycle. 
-        Move all present members to absent.
-        Increment absences for absent members, and mark those who exceed max absences as exited.
+        """Increments the reminder count for the session and updates the database.
+
+        Raises:
+            Exception: If there is an error updating the session in the database.
         """
         try:
-            for member_id, status_info in self.member_statuses.items():  
-                if status_info["status"] == MemberStatus.PRESENT:
-                    # Move present members to absent and absence is set to 0
-                    self.member_statuses[member_id]["status"] = MemberStatus.ABSENT
-                    self.member_statuses[member_id]["absences"] = 0  # Reset absences when moving to absent
-                    logger.debug(f"Member {member_id} moved to absent and reset their absence counter.")
-                elif status_info["status"] == MemberStatus.ABSENT:
-                    # Increment absence count
-                    self.member_statuses[member_id]["absences"] += 1
-                    logger.debug(f"Incremented absences for member {member_id}: {self.member_statuses[member_id]['absences']}")
-                    
-                    # Remove members who exceed max absences and mark them as exited
-                    if self.member_statuses[member_id]["absences"] >= CheckinSession.max_absences:
-                        self.member_statuses[member_id]["status"] = MemberStatus.EXITED
-                        self.member_statuses[member_id]["absences"] = 0
-                        self.member_ids.remove(member_id)
-                        logger.info(f"Member {member_id} exceeded max absences. Status set to exited.")
-
-            # Bulk update member statuses in the database after processing all members
-            for member_id, status_info in self.member_statuses.items():
-                await self.db.add_or_update_checkin_member(
-                    self.session_id,
-                    member_id,
-                    status_info["status"].value,
-                    status_info["absences"]
-                )
-            logger.debug(f"Updated member statuses in the database")
+            self.reminder_count += 1
+            asyncio.create_task(self.db.update_checkin_session({
+                "session_id": self.session_id,
+                "reminder_count": self.reminder_count,
+                "last_reminder_message_id": self.last_reminder_message_id,
+                "active": 1
+            }))
+            logger.info(f"Incremented reminder count for session '{self.name}' (ID: {self.session_id}) to {self.reminder_count}.")
         except Exception as e:
-            logger.error(f"Failed to update member statuses: {e}")
+            logger.error(f"Failed to increment reminder count for session '{self.name}' (ID: {self.session_id}): {e}")
+            raise
 
-    """Message Functions"""
+    async def update_member_statuses(self):
+        """Updates the statuses of members in the check-in session.
 
-    # Embed Function - Create Embed
+        Moves members from 'PRESENT' to 'ABSENT', increments absences for 'ABSENT' members,
+        and marks members as 'EXITED' if they exceed the maximum allowed absences.
+
+        Raises:
+            Exception: If there is an error updating member statuses in the database.
+        """
+        try:
+            for member_id, data in self.member_statuses.items():
+                if data["status"] == MemberStatus.PRESENT:
+                    self.member_statuses[member_id]["status"] = MemberStatus.ABSENT  # Move to absent
+                    self.member_statuses[member_id]["absences"] = 0  # Reset absences
+                    logger.info(f"Member {member_id} moved to ABSENT in session '{self.name}' (ID: {self.session_id}).")
+
+                elif data["status"] == MemberStatus.ABSENT:
+                    self.member_statuses[member_id]["absences"] += 1  # Increment absences
+                    logger.info(
+                        f"Incremented absences for member {member_id} in session '{self.name}' (ID: {self.session_id}) to "
+                        f"{self.member_statuses[member_id]['absences']}."
+                    )
+
+                    if self.member_statuses[member_id]["absences"] >= CheckinSession.max_absences:
+                        self.member_statuses[member_id]["status"] = MemberStatus.EXITED  # Mark as exited
+                        self.member_statuses[member_id]["absences"] = 0  # Reset absences
+                        if member_id in self.member_ids:
+                            self.member_ids.remove(member_id)  # Remove from active members
+                        logger.info(
+                            f"Member {member_id} EXITED session '{self.name}' (ID: {self.session_id}) due to exceeding max absences."
+                        )
+
+            await self._bulk_update_member_statuses()  # Update statuses in the database
+            logger.debug(f"Member statuses updated for session '{self.name}' (ID: {self.session_id}).")
+
+        except Exception as e:
+            logger.error(f"Failed to update member statuses for session '{self.name}' (ID: {self.session_id}): {e}")
+
+    async def _bulk_update_member_statuses(self):
+        """Helper function to bulk update member statuses in the database.
+
+        Raises:
+            Exception: If there is an issue with the database update.
+        """
+        try:
+            updates = []
+            for member_id, data in self.member_statuses.items():
+                updates.append({
+                    "session_id": self.session_id,
+                    "member_id": member_id,
+                    "status": data["status"].value,
+                    "absences": data["absences"]
+                })
+            await self.db.bulk_update_checkin_members(updates)
+            logger.debug(f"Bulk updated member statuses in database for session '{self.name}' (ID: {self.session_id}).")
+        except Exception as e:
+            logger.error(f"Failed to bulk update member statuses in database for session '{self.name}' (ID: {self.session_id}): {e}")
+            raise
+
+    async def add_or_update_member(self, member_id: int, status: MemberStatus, absences: int = 0):
+        """Adds or updates a member's status in the check-in session.
+
+        Args:
+            member_id (int): The ID of the member.
+            status (MemberStatus): The new status of the member.
+            absences (int): The number of absences for the member (default: 0).
+
+        Raises:
+            Exception: If there is an error updating the member in the database.
+        """
+        try:
+            self.member_statuses[member_id] = {"status": status, "absences": absences}
+            if status != MemberStatus.EXITED and member_id not in self.member_ids:
+                self.member_ids.append(member_id)
+            await self.db.add_or_update_checkin_member(self.session_id, member_id, status.value, absences)
+            logger.info(
+                f"Updated status for member {member_id} in session '{self.name}' (ID: {self.session_id}) to {status.name} "
+                f"with {absences} absences."
+            )
+        except Exception as e:
+            logger.error(f"Failed to update member {member_id} in session '{self.name}' (ID: {self.session_id}): {e}")
+            raise
+
     def create_embed(self, initial: bool = False) -> discord.Embed:
         """Creates an embed for the check-in session."""
 
