@@ -221,3 +221,35 @@ def is_group_creator():
         logger.info(f"User {interaction.user.name} is {'the' if is_creator else 'not the'} group creator")
         return is_creator
     return app_commands.check(predicate)
+
+
+import random
+
+class ProductivityService:
+    def __init__(self, db_handler):
+        self.db = db_handler
+
+    async def get_productivity_metrics(self, user_id):
+        tasks_completed = await self.get_tasks_completed(user_id)
+        time_spent = self.get_mock_time_spent()
+        efficiency_score = self.calculate_efficiency(tasks_completed, time_spent)
+
+        return {
+            "tasks_completed": tasks_completed,
+            "time_spent": time_spent,
+            "efficiency_score": efficiency_score,
+        }
+
+    async def get_tasks_completed(self, user_id):
+        tasks = await self.db.get_user_tasks(user_id)
+        completed_tasks = [task for task in tasks if task['completed']]
+        return len(completed_tasks)
+
+    def get_mock_time_spent(self):
+        # Generate a random number of hours between 1 and 40
+        return random.randint(1, 40)
+
+    def calculate_efficiency(self, tasks, time):
+        if time == 0:
+            return 0.0
+        return round(tasks / time, 2)
