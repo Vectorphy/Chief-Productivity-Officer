@@ -207,6 +207,7 @@ class Manager(commands.Cog):
         logger.info(f"Listing managers for guild {interaction.guild_id}")
         managers = await self.bot.db.get_all_managers(interaction.guild_id)
         
+
         embed = discord.Embed(title="Managers", color=discord.Color.blue())
         for manager in managers:
             user = await self.bot.fetch_user(manager['user_id'])
