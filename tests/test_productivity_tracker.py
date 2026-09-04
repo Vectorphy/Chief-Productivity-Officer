@@ -1,14 +1,15 @@
-import unittest
-from unittest.mock import MagicMock, AsyncMock
 import asyncio
-import sys
 import os
+import sys
+import unittest
+from unittest.mock import AsyncMock, MagicMock
 
 # Add the root directory to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from cogs.productivity_tracker import ProductivityTracker
 from utils import ProductivityService
+
 
 class MockDBHandler:
     async def get_user_tasks(self, user_id):

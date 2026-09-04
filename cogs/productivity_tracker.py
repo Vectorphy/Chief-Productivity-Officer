@@ -1,7 +1,9 @@
+import logging
+
 import discord
 from discord import app_commands
 from discord.ext import commands
-import logging
+
 from utils import ProductivityService
 
 logger = logging.getLogger(__name__)
@@ -21,9 +23,9 @@ class ProductivityTracker(commands.Cog):
             title=f"{interaction.user.display_name}'s Productivity Metrics",
             color=discord.Color.green()
         )
-        embed.add_field(name="Tasks Completed", value=metrics["tasks_completed"], inline=False)
-        embed.add_field(name="Time Spent (hours, mock)", value=metrics["time_spent"], inline=False)
-        embed.add_field(name="Efficiency Score (tasks/hour)", value=metrics["efficiency_score"], inline=False)
+        embed.add_field(name="Tasks Completed", value=str(metrics["tasks_completed"]), inline=False)
+        embed.add_field(name="Time Spent (hours, mock)", value=str(metrics["time_spent"]), inline=False)
+        embed.add_field(name="Efficiency Score (tasks/hour)", value=str(metrics["efficiency_score"]), inline=False)
 
         await interaction.response.send_message(embed=embed)
 

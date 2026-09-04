@@ -1,9 +1,11 @@
+import logging
 import os
+
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+
 from database import DBHandler as Database
-import logging
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -37,18 +39,22 @@ class CPO(commands.Bot):
                     logger.info(f"Loaded extension: {filename[:-3]}")
                 except Exception as e:
                     logger.error(f"Failed to load extension {filename[:-3]}: {e}")
-        await self.tree.sync()
+        synced = await self.tree.sync()
+        logger.info(f"Synced {len(synced)} command(s) globally.")
         logger.info("CPO setup completed.")
 
     async def on_ready(self):
         logger.info(f'{self.user} has connected to Discord!')
         logger.info(f"Guilds: {len(self.guilds)}")
         logger.info(f"Users: {len(set(self.get_all_members()))}")
-
-        synced = await self.tree.sync()
-        logger.info(f"Synced {len(synced)} command(s)")
-        for command in synced:
-            logger.info(f"  - {command.name}")
+        # Clear any guild-scoped command copies so Discord only displays the global commands once
+        for guild in self.guilds:
+            try:
+                self.tree.clear_commands(guild=guild)
+                await self.tree.sync(guild=guild)
+                logger.info(f"Cleaned guild commands for '{guild.name}' ({guild.id}) to eliminate duplicates.")
+            except Exception as e:
+                logger.warning(f"Failed to clear guild commands for '{guild.name}' ({guild.id}): {e}")
 
     async def close(self):
         await self.db.close()
@@ -71,13 +77,28 @@ async def on_command_error(ctx, error):
 
 @cpo.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
-    if isinstance(error, discord.app_commands.CommandOnCooldown):
-        await interaction.response.send_message(f"This command is on cooldown. Try again in {error.retry_after:.2f} seconds.", ephemeral=True)
-    elif isinstance(error, discord.app_commands.MissingPermissions):
-        await interaction.response.send_message("You don't have the required permissions to use this command.", ephemeral=True)
+    actual_error = getattr(error, 'original', error)
+    message = "An error occurred while processing the command."
+    if isinstance(actual_error, discord.app_commands.CommandOnCooldown):
+        message = f"This command is on cooldown. Try again in {actual_error.retry_after:.2f} seconds."
+    elif isinstance(actual_error, discord.app_commands.MissingPermissions):
+        message = "You don't have the required permissions to use this command."
+    elif isinstance(actual_error, discord.app_commands.CheckFailure):
+        message = str(actual_error) if str(actual_error) else "You don't have permission to use this command."
     else:
         logger.exception(f"An error occurred in app command: {error}")
-        await interaction.response.send_message("An error occurred while processing the command.", ephemeral=True)
+
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            try:
+                await interaction.response.send_message(message, ephemeral=True)
+            except discord.InteractionResponded:
+                await interaction.followup.send(message, ephemeral=True)
+    except Exception as exc:
+        logger.exception(f"Failed to send error response to interaction: {exc}")
+
 
 if __name__ == "__main__":
     if not TOKEN:

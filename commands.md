@@ -19,6 +19,11 @@
   - `name`: The name of the study group to end
   - Deletes the specified study group, removing all members and associated roles.
 
+- `/transfer_group <new_owner> [group_name]`: Transfer study group ownership
+  - `new_owner`: The server member to transfer ownership to
+  - `group_name`: (Optional) The name of the study group (defaults to current channel's group)
+  - Transfers ownership of the study group, updating database records and role privileges.
+
 - `/list_groups`: List all active study groups in the server
   - Displays a list of all current study groups with their member counts.
 
@@ -76,30 +81,40 @@
   - `mentions`: Users or roles to include in the check-in session
   - Starts a new check-in session with specified duration and participants.
 
-## Management
+## Management & Authorization
 
-- `/add_bot_developer <user>`: Add a bot developer (Bot Developer only)
-  - `user`: The user to promote to bot developer
-  - Grants the highest level of permissions to the specified user.
+### Authorization Tiers
+- **Admin Tier** (Permission Level 3-4): Server Owner, Server Administrators (`administrator=True`), Bot Developers. Admin commands are invisible to non-admins in Discord's slash command picker.
+- **Mod Tier** (Permission Level 2): Moderators with `manage_guild`, `manage_channels`, `manage_roles`, `moderate_members`, `kick_members`, `ban_members`, staff roles, or registered in DB.
+- **User Tier** (Permission Level 0-1): Baseline server members and study group participants.
 
-- `/add_guild_manager <user>`: Add a guild manager (Bot Developer only)
-  - `user`: The user to promote to guild manager
-  - Grants server-specific management permissions to the specified user.
+### Management Commands
 
-- `/remove_guild_manager <user>`: Remove a guild manager (Bot Developer only)
-  - `user`: The user to demote from guild manager
-  - Removes server-specific management permissions from the specified user.
+- `/sync_commands [guild_only: bool = False]`: Synchronize application slash commands with Discord (Admin only, invisible to non-admins)
+  - `guild_only`: When `True`, synchronizes slash commands exclusively to the current server; when `False`, syncs globally.
 
-- `/list_managers`: List all managers for this server
-  - Displays a list of all users with elevated permissions (bot developers and guild managers) for the current server.
+- `/user_level [user: Optional[discord.Member]]`: Check the authorization level and tier of any member (Visible to all)
+  - `user`: Optional member to inspect (defaults to yourself). Returns an embed displaying the user's High-Level Tier (`Admin`, `Mod`, `User`) and numeric permission level.
+
+- `/add_bot_developer <user>`: Add a bot developer (Bot Developer only, Admin permission required)
+  - `user`: The user to promote to bot developer.
+
+- `/add_guild_manager <user>`: Add a guild manager (Admin only)
+  - `user`: The user to promote to administrator/manager.
+
+- `/remove_guild_manager <user>`: Remove a guild manager (Admin only)
+  - `user`: The user to demote from manager status.
+
+- `/list_managers`: List all managers and staff for this server (Moderator / Admin permission required)
+  - Displays all staff members, moderators, administrators, and bot developers.
 
 - `/set_permission_level <user> <level>`: Set the permission level for a user (Bot Developer only)
-  - `user`: The user to set permissions for
-  - `level`: The permission level to set (0: Regular User, 1: Group Creator, 2: Guild Manager, 3: Bot Developer)
-  - Sets a specific permission level for the specified user.
+  - `user`: The user to set permissions for.
+  - `level`: The level to assign (0: User, 1: Member, 2: Mod, 3: Admin, 4: Dev).
 
-Note: All commands use slash command syntax (/).
+- `/sync_managers`: Synchronize server owner and moderators (Admin only)
+  - Scans the guild and registers the server owner & administrators as `ADMIN` (Level 3) and moderators/staff as `MODERATOR` (Level 2).
 
-
+Note: All commands use slash command syntax (`/`). Commands requiring elevated permissions use Discord's native `default_permissions` to remain hidden from unauthorized members in the Discord client interface.
 
 ---
