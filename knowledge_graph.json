@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "project": {
+    "name": "Chief-Productivity-Officer",
+    "version": "1.0.0",
+    "description": "Discord Bot for productivity tracking, pomodoro timers, check-in standups, and study group management.",
+    "language": "Python 3.10+",
+    "framework": "discord.py 2.4+",
+    "database": "SQLite 3 (bot_database.sqlite)"
+  },
+  "nodes": [
+    {
+      "id": "bot_core",
+      "name": "CPO Bot Core",
+      "type": "CoreRuntime",
+      "file": "bot.py",
+      "class": "CPO",
+      "description": "Discord bot entry point. Manages gateway connection, extension/cog loading, app command synchronization, and error dispatching.",
+      "dependencies": ["database_handler", "cogs"]
+    },
+    {
+      "id": "database_handler",
+      "name": "Database Handler",
+      "type": "PersistenceManager",
+      "file": "database.py",
+      "class": "DBHandler",
+      "description": "Thread-safe asynchronous SQLite persistence manager utilizing asyncio.Lock() for ACID concurrency.",
+      "tables": [
+        "study_groups",
+        "study_groups_members",
+        "pomodoro_sessions",
+        "managers",
+        "voice_channel_logs",
+        "guild_settings",
+        "tasks",
+        "checkin_sessions",
+        "checkin_members"
+      ]
+    },
+    {
+      "id": "utils_service",
+      "name": "Utils & Domain Services",
+      "type": "UtilityLayer",
+      "file": "utils.py",
+      "classes": ["ProductivityService"],
+      "functions": [
+        "parse_seconds_to_hms",
+        "parse_duration",
+        "parse_mentions",
+        "validate_parameters",
+        "check_manager",
+        "is_manager",
+        "app_is_manager",
+        "is_group_creator"
+      ],
+      "description": "Shared regex duration parsers, mention resolution, parameter validators, and productivity scoring engine."
+    },
+    {
+      "id": "cog_checkin",
+      "name": "Checkin Cog",
+      "type": "FeatureModule",
+      "file": "cogs/checkin.py",
+      "class": "CheckinCog",
+      "models": ["CheckinSession", "CheckinGuildSettings", "MemberStatus", "MemberStatusKey"],
+      "commands": [
+        {
+          "name": "checkin",
+          "description": "Start an interactive checkin / standup session with periodic attendance pings.",
+          "parameters": ["duration", "mentions", "name", "min_duration", "max_members"]
+        }
+      ]
+    },
+    {
+      "id": "cog_study_groups",
+      "name": "Study Groups Cog",
+      "type": "FeatureModule",
+      "file": "cogs/study_groups.py",
+      "class": "StudyGroupCog",
+      "models": ["StudyGroup"],
+      "commands": [
+        {"name": "create_group", "description": "Create a new study group and provision channels/roles."},
+        {"name": "join_group", "description": "Join an existing active study group."},
+        {"name": "leave_group", "description": "Leave a joined study group."},
+        {"name": "end_group", "description": "End study group session and cleanup resources."},
+        {"name": "list_groups", "description": "List all active study groups in guild."},
+        {"name": "invite_to_group", "description": "Invite another user to the study group."}
+      ]
+    },
+    {
+      "id": "cog_pomodoro",
+      "name": "Pomodoro Cog",
+      "type": "FeatureModule",
+      "file": "cogs/pomodoro.py",
+      "class": "Pomodoro",
+      "models": ["PomodoroSession"],
+      "commands": [
+        {"name": "start_pomodoro", "description": "Start a timed Pomodoro session (focus/break cycles)."},
+        {"name": "end_pomodoro", "description": "End active Pomodoro session."},
+        {"name": "pause_pomodoro", "description": "Pause active Pomodoro timer."},
+        {"name": "resume_pomodoro", "description": "Resume paused Pomodoro timer."},
+        {"name": "pomodoro_status", "description": "Check remaining time and cycle statistics."}
+      ]
+    },
+    {
+      "id": "cog_manager",
+      "name": "Manager & Permission Cog",
+      "type": "FeatureModule",
+      "file": "cogs/manager.py",
+      "class": "Manager",
+      "models": ["PermissionLevel"],
+      "decorators": ["is_member", "is_owner", "check_user_groups"],
+      "commands": [
+        {"name": "add_bot_developer", "description": "Add superuser bot developer."},
+        {"name": "add_guild_manager", "description": "Add server-level guild manager."},
+        {"name": "remove_guild_manager", "description": "Remove server-level guild manager."},
+        {"name": "list_managers", "description": "List all managers for the server."},
+        {"name": "set_permission_level", "description": "Explicitly set permission level for a user."}
+      ]
+    },
+    {
+      "id": "cog_tasklist",
+      "name": "Task List Cog",
+      "type": "FeatureModule",
+      "file": "cogs/tasklist.py",
+      "class": "TaskList",
+      "commands": [
+        {"name": "task_add", "description": "Add a new task to personal to-do list."},
+        {"name": "task_complete", "description": "Mark a task as complete by ID."},
+        {"name": "task_list", "description": "List active and completed tasks."}
+      ]
+    },
+    {
+      "id": "cog_productivity_tracker",
+      "name": "Productivity Tracker Cog",
+      "type": "FeatureModule",
+      "file": "cogs/productivity_tracker.py",
+      "class": "ProductivityTracker",
+      "commands": [
+        {"name": "productivity", "description": "Display user productivity metrics embed."}
+      ]
+    },
+    {
+      "id": "cog_voice_channels",
+      "name": "Voice Channels Cog",
+      "type": "FeatureModule",
+      "file": "cogs/voice_channels.py",
+      "class": "VoiceChannels",
+      "commands": [
+        {"name": "create_vc", "description": "Create a dedicated voice channel for study group."},
+        {"name": "delete_vc", "description": "Delete voice channel associated with study group."},
+        {"name": "delete_role", "description": "Delete custom role associated with study group."}
+      ]
+    }
+  ],
+  "edges": [
+    {"from": "bot_core", "to": "database_handler", "relation": "instantiates_and_holds"},
+    {"from": "bot_core", "to": "cog_checkin", "relation": "loads_extension"},
+    {"from": "bot_core", "to": "cog_study_groups", "relation": "loads_extension"},
+    {"from": "bot_core", "to": "cog_pomodoro", "relation": "loads_extension"},
+    {"from": "bot_core", "to": "cog_manager", "relation": "loads_extension"},
+    {"from": "bot_core", "to": "cog_tasklist", "relation": "loads_extension"},
+    {"from": "bot_core", "to": "cog_productivity_tracker", "relation": "loads_extension"},
+    {"from": "bot_core", "to": "cog_voice_channels", "relation": "loads_extension"},
+    {"from": "cog_checkin", "to": "database_handler", "relation": "queries_and_persists"},
+    {"from": "cog_study_groups", "to": "database_handler", "relation": "queries_and_persists"},
+    {"from": "cog_pomodoro", "to": "database_handler", "relation": "queries_and_persists"},
+    {"from": "cog_manager", "to": "database_handler", "relation": "queries_and_persists"},
+    {"from": "cog_tasklist", "to": "database_handler", "relation": "queries_and_persists"},
+    {"from": "cog_productivity_tracker", "to": "utils_service", "relation": "uses_productivity_service"},
+    {"from": "cog_checkin", "to": "utils_service", "relation": "uses_validation_and_parsers"},
+    {"from": "cog_study_groups", "to": "utils_service", "relation": "uses_validation_and_parsers"},
+    {"from": "cog_manager", "to": "cog_checkin", "relation": "enforces_session_caps"},
+    {"from": "cog_manager", "to": "cog_study_groups", "relation": "enforces_group_caps"}
+  ],
+  "permission_hierarchy": {
+    "BOT_DEVELOPER": 4,
+    "GUILD_MANAGER": 3,
+    "GROUP_OWNER": 2,
+    "GROUP_MEMBER": 1,
+    "REGULAR_USER": 0
+  },
+  "testing_framework": {
+    "runner": "pytest",
+    "unit_tests_dir": "tests/",
+    "mock_patterns": "unittest.mock.AsyncMock, unittest.mock.MagicMock"
+  }
+}

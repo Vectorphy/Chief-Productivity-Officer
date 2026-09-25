@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chief-productivity-officer"
+version = "1.0.0rc1"
+description = "Chief Productivity Officer (CPO) - A Discord Productivity & Study Management Bot"
+readme = "readme.md"
+requires-python = ">=3.10"
+dependencies = [
+    "discord.py>=2.4.0",
+    "python-dotenv>=1.0.0",
+    "pymongo[srv]>=4.6.0",
+    "dnspython>=2.5.0",
+    "motor>=3.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "build>=1.0.0",
+]
+
+[tool.setuptools]
+py-modules = ["bot", "database", "utils"]
+
+[tool.setuptools.packages.find]
+include = ["cogs*"]
+exclude = ["tests*", "docs*", "scratch*"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --import-mode=importlib"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "C90", "I", "N"]
+ignore = ["E501", "C901"]

@@ -219,7 +219,7 @@ class DBHandler:
             INSERT OR REPLACE INTO study_groups (
                 guild_id, name, group_id, creator_id, owner_id, category_id,
                 max_members, group_role_id, vc_id, text_id, info_embed_id,
-                speak_enabled, video_mode, video_timer, 
+                speak_enabled, video_mode, video_timer,
                 start_time, end_time, duration, active
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -364,17 +364,17 @@ class DBHandler:
         async with self.lock:
             cursor = self.conn.cursor()
             cursor.execute('''
-                SELECT * FROM study_groups 
+                SELECT * FROM study_groups
                 WHERE (text_id = ? OR vc_id = ?) AND active = 1
-                ORDER BY id DESC 
+                ORDER BY id DESC
                 LIMIT 1
             ''', (channel_id, channel_id))
             group = cursor.fetchone()
             if not group:
                 cursor.execute('''
-                    SELECT * FROM study_groups 
+                    SELECT * FROM study_groups
                     WHERE (text_id = ? OR vc_id = ?)
-                    ORDER BY id DESC 
+                    ORDER BY id DESC
                     LIMIT 1
                 ''', (channel_id, channel_id))
                 group = cursor.fetchone()
@@ -474,7 +474,7 @@ class DBHandler:
         async with self.lock:
             cursor = self.conn.cursor()
             cursor.execute('''
-                SELECT study_groups.* 
+                SELECT study_groups.*
                 FROM study_groups
                 JOIN study_groups_members ON study_groups.id = study_groups_members.group_id
                 WHERE study_groups_members.user_id = ? AND study_groups.guild_id = ?
@@ -509,9 +509,9 @@ class DBHandler:
             cursor = self.conn.cursor()
             cursor.execute('''
             INSERT INTO checkin_sessions (
-                session_id, guild_id, name, creator_id, owner_id, text_id, 
+                session_id, guild_id, name, creator_id, owner_id, text_id,
                 duration, start_time, last_reminder_time, next_reminder_time, reminder_count, last_reminder_message_id, active
-            ) 
+            )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 session_data["session_id"],
@@ -648,9 +648,9 @@ class DBHandler:
         async with self.lock:
             cursor = self.conn.cursor()
             cursor.execute('''
-            SELECT * FROM study_groups 
-            WHERE guild_id = ? 
-            ORDER BY active DESC, id DESC 
+            SELECT * FROM study_groups
+            WHERE guild_id = ?
+            ORDER BY active DESC, id DESC
             LIMIT 1
             ''', (guild_id,))
             group = cursor.fetchone()

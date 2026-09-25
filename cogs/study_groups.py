@@ -555,7 +555,9 @@ class StudyGroup:
                 pomo_session = pomo_cog.sessions.get(self.group_id)
                 if not pomo_session:
                     for s in pomo_cog.sessions.values():
-                        if str(getattr(s, 'group_id', '')) == str(self.group_id) or (getattr(s, 'text_id', 0) and getattr(s, 'text_id', 0) == self.text_id):
+                        s_group_id = str(getattr(s, 'group_id', ''))
+                        s_text_id = getattr(s, 'text_id', None)
+                        if s_group_id == str(self.group_id) or (s_text_id is not None and s_text_id == self.text_id):
                             pomo_session = s
                             break
 
@@ -676,7 +678,7 @@ class StudyGroup:
          - Implemented
      - Extend Duration - Button
          - Implemented
-     - Votekick - Button 
+     - Votekick - Button
          - Placeholder Set up
      - Speak on/off - Button
          - Placeholder Set up
@@ -945,7 +947,9 @@ class StudyGroup:
                 pomo_session = pomo_cog.sessions.get(self.group_id)
                 if not pomo_session:
                     for s in pomo_cog.sessions.values():
-                        if str(getattr(s, 'group_id', '')) == str(self.group_id) or (getattr(s, 'text_id', 0) and getattr(s, 'text_id', 0) == self.text_id):
+                        s_group_id = str(getattr(s, 'group_id', ''))
+                        s_text_id = getattr(s, 'text_id', None)
+                        if s_group_id == str(self.group_id) or (s_text_id is not None and s_text_id == self.text_id):
                             pomo_session = s
                             break
 
@@ -975,7 +979,9 @@ class StudyGroup:
                 pomo_session = pomo_cog.sessions.get(self.group_id)
                 if not pomo_session:
                     for s in pomo_cog.sessions.values():
-                        if str(getattr(s, 'group_id', '')) == str(self.group_id) or (getattr(s, 'text_id', 0) and getattr(s, 'text_id', 0) == self.text_id):
+                        s_group_id = str(getattr(s, 'group_id', ''))
+                        s_text_id = getattr(s, 'text_id', None)
+                        if s_group_id == str(self.group_id) or (s_text_id is not None and s_text_id == self.text_id):
                             pomo_session = s
                             break
 
@@ -1001,7 +1007,7 @@ class StudyGroup:
 
     ### --- END FUNCTIONS --- ###
     """
-    Flow of Logic - 
+    Flow of Logic -
     End Group function is called in the following situtations:
         1. Check End Condition
             - Check if the group is active
