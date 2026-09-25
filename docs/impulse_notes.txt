@@ -1,0 +1,124 @@
+### Study Group & Checkin Session Notes
+
+Things to do to setup the StudyGroup Instance (using __init__ and the ):
+
+TO DO's
+
+1. See what all functions can benefit from DBHandler.update_study_group()
+ - And what other DB Operations become redundant
+2. How to get the details of data stored in database, for cases when the bot restarts and such?
+ - I have implemented a func load_sessions_from_db for it
+3. Model Study Groups similar to Checkin Session
+ - Add Settings Class
+ - Maybe add decorator check functions
+
+
+
+
+Info: 
+Interaction Buttons:
+    1. Invite to Group - Select Menu
+         - only member
+         - Not Implemented
+    2. Kick from Group - Select Menu
+         - only owner
+         - Not Implemented
+    3. Leave Group - Button - 
+         - only members
+    4. End Group - Button - 
+         - only owner
+         - Implemented
+    5. VoteKick from Group - Button - 
+         - only member
+    6. Speak On/Off Toggle - Button
+         - only owner (can change later)
+    7. Video On/Off/Force Toggle - Button
+         - only owner (can change later)
+    8. Extend Duration - Button - 
+         - only owner (can change later)
+         - Implemented (can be used by anyone)
+    9. Rename Group - Button
+         - only owner (can change later)
+         - Implemented (can be used by anyone)
+For later:
+    1. Show/Hide Toggle - Button
+         - only owner
+         - makes the group public/private
+    2. Lock/Unlock VC Toggle - Button
+         - only owner
+    3. Claim - Button
+         - only member
+         - Only if there's no owner
+
+
+
+Random useful bits of info and thoughts and ideas:
+    
+    Note 1: storing guild object is very useful
+            as it stores key information like channel and member information
+            thereby reducing API calls to Discord (helps stay under rate limit)
+    
+    Note 2: Deciding to use guild object for all class internal functions, 
+            and using ID (obtained from guild Object info) for all cross-class functions
+    
+    Note 3: Need to use another function to setup_group_resources()
+            bc I can't have async functions in the constructor
+
+    Note 4: Whenever a discord command or interaction is used, in that function, 
+            we first defer it, so that interaction 3 second timeout is not triggered
+            then we use interaction.followup.send() to send any messages required
+
+    Note 5: If you're handling errors and logging,
+            it's better to handle it inside the function you're calling
+            rather than the caller, to keep the caller code clean
+            Caller - the scope which calls the function / object / attribute
+            Callee - the function / object / attribute that's BEING CALLED
+        
+    Note 6: To Do: Between Class Variables and Database Calls,
+            Class Variables are called, but 
+            if it's missing or there's an error
+            Database Values are Fetched
+            (This needs to be implemented to make it more robust)
+    
+    Note 7: To Do: Make bot more robust to shutdowns and network outage
+            Also keep in mind that the bot may shut down and wake up
+            So it should have a function which fetches all the existing data from the db
+            Contrarily, when it's closing gracefully, it should compulsorily delete all the data from db
+    
+    Note 8: Updating DBs, for Checkin Sessions & Study Groups
+            I just realised, that for all DB operations by a certain identifying field (WHERE ?), 
+            we can pass two parameters, the session ID or the group ID or the member or whatever,
+            and the data to be updated, can be passed as a dict
+            But I haven't implemented it yet, I'd rather make my code work, than to change the signature of my funcs just this much
+
+    Note 9: I just realised that we can have a single DB function to bot insert into, and update values
+            INSERT INTO ... ON DUPLICATE KEY UPDATE .... will take care of it.
+            We'll still need a fetch func for each db
+    
+    Note 10: My goal - Module Settings Command in its own module
+            This way all the settings of the class will stay in its own module, and can directly interact with its associated DB
+            Even the setup_checkin func I'm thinking to add it to checkin.py,
+            Only thing - there will be @is_manager decorator on top of that func.
+            This func will be from the Manager class.
+    
+    Note 11: Just learnt - can store JSON in DB
+            Serialised JSON strings can be stored to keep list of members, or list of whitelist/blacklist roles per guild in a single line
+            Although having a separate member list is good bc we're accessing individual members sometimes, 
+            But don't have to think about it during whitelist/blacklist roles
+    
+    Note 12: Discord Guild is a large object
+            Since Discord Guild is a large object, I plan on storing it only in one place, somewhere in manager.py
+            All modules will access that cache from manager.py to fetch roles/perms/users, whatever.
+            That way memory usage can be optimized
+            Right now CheckinSession and CheckinGuildSettings have a cache of the guild, for each instance
+
+
+
+
+## Checkin Session - To Do's
+01 Ensure proper error handling and logging for the entire module, esp CheckinGuildSettings
+02 Prevent Key Errors by using .get(), esp while using DB functions and DB keys
+03 What if the Discord Member leaves the server? get_member() will return NoneType and lead to error. Same thing for fetch_message, get_roles, and whatever related
+04 Add hardcoded limits to max_members, min_duration, max_duration, max_absences, max_breaks, max_user_groups so that bot doesn't break
+05 Add DB storage of settings - the list of whitelist/blacklists can be stored as JSON/TEXT files, in a single cell, so settings of each guild can be stored in a single line
+
