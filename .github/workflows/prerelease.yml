@@ -121,27 +121,10 @@ jobs:
     - name: Extract Release Notes from CHANGELOG.md
       id: changelog_notes
       shell: bash
+      env:
+        RELEASE_TAG: ${{ steps.release_meta.outputs.tag }}
       run: |
-        if [ -f CHANGELOG.md ]; then
-          # Extract notes under the first version heading
-          python -c "
-          import re
-          with open('CHANGELOG.md', 'r', encoding='utf-8') as f:
-              content = f.read()
-          # Match section between first and second ## heading
-          pattern = r'## \[[^\]]+\].*?\n(.*?)(?=\n## \[|\Z)'
-          match = re.search(pattern, content, re.DOTALL)
-          if match:
-              notes = match.group(1).strip()
-              with open('RELEASE_NOTES.md', 'w', encoding='utf-8') as out:
-                  out.write(notes)
-          else:
-              with open('RELEASE_NOTES.md', 'w', encoding='utf-8') as out:
-                  out.write('Automated distribution release for Chief Productivity Officer.')
-          "
-        else
-          echo "Automated distribution release for Chief Productivity Officer." > RELEASE_NOTES.md
-        fi
+        python .github/scripts/extract_release_notes.py
 
     - name: Publish GitHub Release
       uses: softprops/action-gh-release@v2
