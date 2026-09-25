@@ -155,7 +155,7 @@ jobs:
         files: |
           dist/*
           commands.md
-          README.md
+          readme.md
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
