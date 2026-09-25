@@ -1,0 +1,166 @@
+name: Prerelease & Distribution Packaging
+
+on:
+  push:
+    tags:
+      - 'v*.*.*-*'
+      - 'v*.*.*rc*'
+      - 'v*.*.*a*'
+      - 'v*.*.*b*'
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (e.g. v1.0.0-rc.1)'
+        required: false
+        default: 'v1.0.0-rc.1'
+        type: string
+      prerelease:
+        description: 'Mark as Prerelease'
+        required: true
+        default: true
+        type: boolean
+      title:
+        description: 'Release Title'
+        required: false
+        default: 'Release Candidate 1.0.0-rc.1: Autonomous Operations & Pomodoro Overhaul'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    name: Pre-Release Verification
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-dev.txt
+
+    - name: Run Static Type Check
+      run: |
+        mypy bot.py database.py utils.py cogs/ tests/
+
+    - name: Run Ruff Linter
+      run: |
+        ruff check bot.py database.py utils.py cogs/ tests/
+
+    - name: Run Full Test Suite
+      run: |
+        pytest -v
+
+  build-and-release:
+    name: Build Distribution & Publish GitHub Release
+    needs: validate
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository with full history
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install build tooling
+      run: |
+        python -m pip install --upgrade pip build
+
+    - name: Build Python Wheel and Source Distribution
+      run: |
+        python -m build
+
+    - name: Resolve Release Metadata
+      id: release_meta
+      shell: bash
+      run: |
+        # Resolve tag name from inputs or git ref
+        if [ -n "${{ inputs.tag_name }}" ]; then
+          TAG="${{ inputs.tag_name }}"
+        else
+          TAG="${GITHUB_REF_NAME}"
+        fi
+
+        # Resolve title from inputs or fallback to tag
+        if [ -n "${{ inputs.title }}" ]; then
+          TITLE="${{ inputs.title }}"
+        else
+          TITLE="Chief Productivity Officer ${TAG}"
+        fi
+
+        # Determine prerelease status
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          IS_PRERELEASE="${{ inputs.prerelease }}"
+        else
+          # Mark as prerelease if tag has hyphen, rc, alpha, beta
+          if [[ "${TAG}" =~ -|rc|alpha|beta ]]; then
+            IS_PRERELEASE="true"
+          else
+            IS_PRERELEASE="false"
+          fi
+        fi
+
+        echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+        echo "title=${TITLE}" >> "$GITHUB_OUTPUT"
+        echo "is_prerelease=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
+
+    - name: Extract Release Notes from CHANGELOG.md
+      id: changelog_notes
+      shell: bash
+      run: |
+        if [ -f CHANGELOG.md ]; then
+          # Extract notes under the first version heading
+          python -c "
+          import re
+          with open('CHANGELOG.md', 'r', encoding='utf-8') as f:
+              content = f.read()
+          # Match section between first and second ## heading
+          pattern = r'## \[[^\]]+\].*?\n(.*?)(?=\n## \[|\Z)'
+          match = re.search(pattern, content, re.DOTALL)
+          if match:
+              notes = match.group(1).strip()
+              with open('RELEASE_NOTES.md', 'w', encoding='utf-8') as out:
+                  out.write(notes)
+          else:
+              with open('RELEASE_NOTES.md', 'w', encoding='utf-8') as out:
+                  out.write('Automated distribution release for Chief Productivity Officer.')
+          "
+        else
+          echo "Automated distribution release for Chief Productivity Officer." > RELEASE_NOTES.md
+        fi
+
+    - name: Publish GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.release_meta.outputs.tag }}
+        name: ${{ steps.release_meta.outputs.title }}
+        body_path: RELEASE_NOTES.md
+        prerelease: ${{ steps.release_meta.outputs.is_prerelease == 'true' }}
+        draft: false
+        generate_release_notes: true
+        files: |
+          dist/*
+          commands.md
+          README.md
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload Package Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-distribution-packages
+        path: dist/*

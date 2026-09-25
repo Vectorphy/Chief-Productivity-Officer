@@ -171,7 +171,7 @@ class Pomodoro(commands.Cog):
 
         return None
 
-    def _get_session(self, group: Dict[str, Any]) -> Optional[PomodoroSession]:
+    def _get_session(self, group: Optional[Dict[str, Any]]) -> Optional[PomodoroSession]:
         """Retrieve active Pomodoro session by group id or UUID."""
         if not group:
             return None

@@ -404,7 +404,7 @@ class CheckinSession:
     ## Attendance Function - Move People to Absent
     async def update_member_statuses(self):
         """
-        Update member statuses at the end of each reminder cycle. 
+        Update member statuses at the end of each reminder cycle.
         Move all present members to absent.
         Increment absences for absent members, and mark those who exceed max absences as exited.
         """
@@ -949,7 +949,7 @@ class CheckinSession:
 
             can_end_session = self.can_end(interaction.user.id) or interaction.user.id == self.owner_id or await check_manager(interaction)
             if not can_end_session:
-                await interaction.followup.send(f"Only the session owner, creator, or server managers/moderators can end the session.", ephemeral=True)
+                await interaction.followup.send("Only the session owner, creator, or server managers/moderators can end the session.", ephemeral=True)
                 return
 
             await self.disable_previous_buttons()
@@ -1053,7 +1053,7 @@ class CheckinCog(commands.Cog):
 
                 guild_id = session_data["guild_id"]
                 if guild_id not in self.guild_settings:
-                    guild : Optional[discord.Guild] = self.bot.get_guild(guild_id)
+                    self.bot.get_guild(guild_id)
                     self.guild_settings[guild_id] = CheckinGuildSettings(None)
                 this_guild_settings = self.guild_settings[guild_id]
 
